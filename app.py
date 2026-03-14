@@ -12,6 +12,10 @@ import shutil
 
 import customtkinter as ctk
 
+# customtkinter 5.2.2 + Windows 11 버그 패치
+# _windows_set_titlebar_color 내부에서 str을 callable로 잘못 호출하는 문제
+ctk.CTk._windows_set_titlebar_color = lambda self, color_mode: None
+
 from core.safety import is_safe_command
 from core.runner import run_command
 from installers.winget import WingetInstaller
