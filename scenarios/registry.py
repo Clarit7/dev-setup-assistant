@@ -9,14 +9,12 @@ from typing import Optional
 
 from .base import Scenario
 from .windows.js_timer import JSTimerScenario
+from .windows.web_dev import WebDevScenario
 
 # ── 등록된 시나리오 목록 ─────────────────────────────────────────────────────
 _ALL_SCENARIOS: list = [
     JSTimerScenario(),
-    # 추가 예시:
-    # ReactAppScenario(),
-    # PythonFlaskScenario(),
-    # JavaSpringScenario(),
+    WebDevScenario(),
 ]
 
 
