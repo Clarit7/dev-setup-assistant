@@ -138,8 +138,14 @@ class TestSetEnvActionFormat:
 
 _ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,59}$")
 _ALLOWED_ENV_KEYS = {
+    # AI 에이전트 API 키
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
     "OPENROUTER_API_KEY", "GITHUB_TOKEN",
+    # 데이터베이스 연결
+    "DATABASE_URL", "POSTGRES_URL", "POSTGRES_PASSWORD",
+    "MYSQL_URL", "MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD",
+    "MONGODB_URL", "MONGO_INITDB_ROOT_PASSWORD",
+    "REDIS_URL", "REDIS_PASSWORD",
 }
 
 
@@ -267,6 +273,89 @@ class TestAIAgentsScenario:
 
 
 # ── 6. scenarios/registry — AIAgentsScenario 등록 확인 ───────────────────────
+
+# ── 7. DB CLI — safety whitelist ─────────────────────────────────────────────
+
+class TestDBSafety:
+
+    def test_psql_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["psql", "-U", "postgres"])
+        assert ok
+
+    def test_pg_ctl_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["pg_ctl", "start"])
+        assert ok
+
+    def test_mysql_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["mysql", "-u", "root", "-p"])
+        assert ok
+
+    def test_mysqldump_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["mysqldump", "--all-databases"])
+        assert ok
+
+    def test_mongosh_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["mongosh", "--host", "localhost"])
+        assert ok
+
+    def test_redis_cli_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["redis-cli", "ping"])
+        assert ok
+
+    def test_sqlite3_allowed(self):
+        from core.safety import is_safe_command
+        ok, _ = is_safe_command(["sqlite3", "mydb.db"])
+        assert ok
+
+
+# ── 8. DB 환경변수 SetEnvAction 검증 ─────────────────────────────────────────
+
+_DB_ALLOWED = {
+    "DATABASE_URL", "POSTGRES_URL", "POSTGRES_PASSWORD",
+    "MYSQL_URL", "MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD",
+    "MONGODB_URL", "MONGO_INITDB_ROOT_PASSWORD",
+    "REDIS_URL", "REDIS_PASSWORD",
+}
+
+
+class TestDBEnvValidation:
+
+    def test_database_url_valid(self):
+        ok, _ = _validate_set_env_key("DATABASE_URL")
+        assert ok
+
+    def test_postgres_password_valid(self):
+        ok, _ = _validate_set_env_key("POSTGRES_PASSWORD")
+        assert ok
+
+    def test_mysql_root_password_valid(self):
+        ok, _ = _validate_set_env_key("MYSQL_ROOT_PASSWORD")
+        assert ok
+
+    def test_mongodb_url_valid(self):
+        ok, _ = _validate_set_env_key("MONGODB_URL")
+        assert ok
+
+    def test_redis_url_valid(self):
+        ok, _ = _validate_set_env_key("REDIS_URL")
+        assert ok
+
+    def test_redis_password_valid(self):
+        ok, _ = _validate_set_env_key("REDIS_PASSWORD")
+        assert ok
+
+    def test_db_env_keys_all_in_whitelist(self):
+        """_ALLOWED_ENV_KEYS에 DB 키가 모두 포함돼 있는지 검증"""
+        for key in _DB_ALLOWED:
+            ok, reason = _validate_set_env_key(key)
+            assert ok, f"{key}: {reason}"
+
 
 class TestRegistryAIAgents:
 

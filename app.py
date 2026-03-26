@@ -73,11 +73,23 @@ _PACKAGE_ID_RE = re.compile(r"^[\w][\w.-]+\.[\w][\w.-]+$")
 
 # LLM이 set_env 액션으로 설정할 수 있는 환경변수 화이트리스트
 _ALLOWED_ENV_KEYS = {
+    # AI 에이전트 API 키
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "OPENROUTER_API_KEY",
     "GITHUB_TOKEN",
+    # 데이터베이스 연결
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "POSTGRES_PASSWORD",
+    "MYSQL_URL",
+    "MYSQL_ROOT_PASSWORD",
+    "MYSQL_PASSWORD",
+    "MONGODB_URL",
+    "MONGO_INITDB_ROOT_PASSWORD",
+    "REDIS_URL",
+    "REDIS_PASSWORD",
 }
 # 환경변수명 형식: 대문자·숫자·밑줄, 3~60자
 _ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,59}$")

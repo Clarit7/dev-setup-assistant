@@ -28,6 +28,12 @@ ALLOWED_EXECUTABLES = {
     "aider",    # Aider
     "gh",       # GitHub CLI (gh extension install github/gh-copilot)
     "cursor",   # Cursor IDE 런처
+    # 데이터베이스 CLI
+    "psql", "pg_ctl", "createdb", "dropdb", "initdb",   # PostgreSQL
+    "mysql", "mysqladmin", "mysqldump",                  # MySQL / MariaDB
+    "mongod", "mongosh", "mongo",                        # MongoDB
+    "redis-cli", "redis-server",                         # Redis
+    "sqlite3",                                           # SQLite
 }
 
 # ── 위험한 인자 패턴 (허용된 실행 파일 내에서도 차단) ─────────────────────
