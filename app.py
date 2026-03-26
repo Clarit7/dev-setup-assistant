@@ -108,6 +108,8 @@ class DevSetupApp(ctk.CTk):
 
         # B: 스트리밍 — 이번 응답에서 emit한 문자 수
         self._stream_chars_emitted = 0
+        # E/주제 가드: 스트리밍 시작 직전 텍스트 위치 (topic_valid=False 시 해당 범위 삭제)
+        self._ai_stream_start: Optional[str] = None
 
         # E: 현재 첨부 이미지
         self._current_image = None   # ImageAttachment | None
@@ -409,7 +411,11 @@ class DevSetupApp(ctk.CTk):
         print(f"[DEBUG] _send_to_llm_async: '{user_message[:40]}'")
         self._set_input_enabled(False)
         self._stream_chars_emitted = 0
+
+        # [AI] 헤더를 삽입하고, 헤더 직후 위치를 저장해둔다.
+        # topic_valid=False로 판명되면 이 위치 이후를 전부 삭제하고 고정 메시지로 교체한다.
         self._append_text("[AI]\n")
+        self._ai_stream_start = self.chat_box._textbox.index("end-1c")
 
         def _on_chunk(chunk: str):
             self._stream_chars_emitted += len(chunk)
@@ -430,6 +436,21 @@ class DevSetupApp(ctk.CTk):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_stream_done(self, response: LLMResponse):
+        # ── 주제 가드 (방법 1+4) ────────────────────────────────────────────
+        # LLM이 topic_valid=false를 반환하면, 이미 스트리밍된 내용을 삭제하고
+        # 고정 메시지로 교체한다. LLM 응답 내용은 사용자에게 노출되지 않는다.
+        if not response.topic_valid:
+            if self._ai_stream_start:
+                self.chat_box.configure(state="normal")
+                self.chat_box._textbox.delete(self._ai_stream_start, "end")
+                self.chat_box.configure(state="disabled")
+            self._append_text(
+                "⛔ 이 도구는 개발환경 세팅 용도로만 사용할 수 있습니다.\n\n"
+            )
+            self._set_input_enabled(True)
+            return
+        # ────────────────────────────────────────────────────────────────────
+
         if self._stream_chars_emitted == 0:
             self._append_text(response.message)
         self._append_text("\n\n")

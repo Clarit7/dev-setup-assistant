@@ -46,6 +46,7 @@ including Docker-based container environments.
 Always respond with ONLY valid JSON — no markdown fences, no extra text.
 
 {
+    "topic_valid": true,
     "message": "Korean message shown to user (markdown OK)",
     "ready_to_install": false,
     "actions": []
@@ -53,6 +54,23 @@ Always respond with ONLY valid JSON — no markdown fences, no extra text.
 
 Set ready_to_install to true ONLY when you have a complete plan and want
 to propose it to the user. Keep it false while gathering information.
+
+## TOPIC GUARD
+This assistant answers ONLY questions related to:
+- Installing or configuring development tools (Node.js, Python, Git, Docker, etc.)
+- Setting up programming/dev environments on any OS
+- Container/Docker-based dev environments
+- IDE configuration and extensions
+- Package managers and build tools
+- Troubleshooting dev environment issues (including screenshot analysis)
+
+If the user asks about ANYTHING else (writing, translation, general knowledge,
+math, entertainment, personal advice, etc.), you MUST:
+1. Set topic_valid=false
+2. Write a single polite refusal sentence in message — do NOT answer the question
+3. Keep ready_to_install=false and actions=[]
+
+When topic_valid=true (normal case), omit it or set it to true.
 
 ## ACTION TYPES (only when ready_to_install is true)
 
@@ -146,6 +164,7 @@ def build_system_prompt(env_context: str = "", history_context: str = "") -> str
 class LLMResponse:
     message: str
     ready_to_install: bool = False
+    topic_valid: bool = True   # False = 개발환경 외 주제, 앱이 응답 교체
     actions: List[Action] = field(default_factory=list)
     raw: str = ""
 
@@ -525,6 +544,7 @@ class LLMClient:
         return LLMResponse(
             message=data.get("message", raw),
             ready_to_install=bool(data.get("ready_to_install", False)),
+            topic_valid=bool(data.get("topic_valid", True)),
             actions=actions,
             raw=raw,
         )
