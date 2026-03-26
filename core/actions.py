@@ -30,7 +30,25 @@ class LaunchAction:
     display_name: str
 
 
-Action = Union[InstallAction, RunAction, LaunchAction]
+@dataclass
+class ContainerSetupAction:
+    """Docker 컨테이너 개발 환경 구성
+
+    앱이 직접 처리합니다 (LLM 생성 명령어 아님):
+      - docker pull / docker run
+      - .devcontainer/devcontainer.json 자동 생성
+      - enter-dev.bat / enter-dev.sh 자동 생성
+      - Windows Terminal 프로파일 자동 등록
+      - VS Code / Cursor에서 워크스페이스 자동 열기
+    """
+    image: str            # Docker 이미지 (예: "node:18-bullseye")
+    container_name: str   # 컨테이너 이름 (영숫자 + 하이픈)
+    workspace_path: str   # 로컬 워크스페이스 경로 (빈 문자열이면 기본값 사용)
+    ports: List[str]      # 포트 매핑 (예: ["3000:3000"])
+    display_name: str
+
+
+Action = Union[InstallAction, RunAction, LaunchAction, ContainerSetupAction]
 
 
 def parse_actions(raw_actions: list) -> List[Action]:
@@ -66,6 +84,18 @@ def parse_actions(raw_actions: list) -> List[Action]:
                 display_name=item.get("display_name", ""),
             ))
 
+        elif action_type == "container_setup":
+            ports = item.get("ports", [])
+            if isinstance(ports, str):
+                ports = [p.strip() for p in ports.split(",") if p.strip()]
+            result.append(ContainerSetupAction(
+                image=item.get("image", ""),
+                container_name=item.get("container_name", ""),
+                workspace_path=item.get("workspace_path", ""),
+                ports=ports,
+                display_name=item.get("display_name", ""),
+            ))
+
     return result
 
 
@@ -79,4 +109,8 @@ def format_actions_for_display(actions: List[Action]) -> str:
             lines.append(f"  ▶  실행: {action.display_name}  ({' '.join(action.command)})")
         elif isinstance(action, LaunchAction):
             lines.append(f"  🚀 실행: {action.display_name}")
+        elif isinstance(action, ContainerSetupAction):
+            ports_str = ", ".join(action.ports) if action.ports else "없음"
+            lines.append(f"  🐳 컨테이너: {action.display_name} ({action.image})")
+            lines.append(f"      포트: {ports_str}")
     return "\n".join(lines)

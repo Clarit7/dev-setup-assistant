@@ -64,7 +64,7 @@ def detect_environment() -> List[DetectedTool]:
     return results
 
 
-def format_for_llm(tools: List[DetectedTool]) -> str:
+def format_for_llm(tools: List[DetectedTool], container_context: str = "") -> str:
     """감지 결과를 LLM 시스템 프롬프트용 텍스트로 변환합니다."""
     installed = [t for t in tools if t.installed]
     not_installed = [t for t in tools if not t.installed]
@@ -80,4 +80,9 @@ def format_for_llm(tools: List[DetectedTool]) -> str:
         lines.append(f"  ✗ {', '.join(t.name for t in not_installed)}")
 
     lines.append("이미 설치된 항목은 재설치하지 말고 건너뛰세요.")
+
+    if container_context:
+        lines.append("")
+        lines.append(container_context)
+
     return "\n".join(lines)

@@ -19,6 +19,8 @@ ALLOWED_EXECUTABLES = {
     # 기타 런타임 / 도구
     "git", "code", "cargo", "rustup", "go", "dotnet",
     "mvn", "gradle", "java", "javac",
+    # 컨테이너
+    "docker", "docker-compose", "podman", "wsl",
 }
 
 # ── 위험한 인자 패턴 (허용된 실행 파일 내에서도 차단) ─────────────────────

@@ -20,7 +20,10 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, List, Optional
+from typing import TYPE_CHECKING, Callable, Iterator, List, Optional
+
+if TYPE_CHECKING:
+    from ui.image_handler import ImageAttachment
 
 # .env 파일 자동 로드 — 모듈 위치 기준 절대 경로 사용
 try:
@@ -35,8 +38,9 @@ from .actions import Action, parse_actions
 # ── 기본 시스템 프롬프트 ──────────────────────────────────────────────────────
 
 _BASE_SYSTEM_PROMPT = """\
-You are a Windows developer environment setup assistant.
-Your job: help users install the right development tools on their Windows PC.
+You are a developer environment setup assistant.
+Your job: help users install and configure the right development tools,
+including Docker-based container environments.
 
 ## RESPONSE FORMAT
 Always respond with ONLY valid JSON — no markdown fences, no extra text.
@@ -47,25 +51,45 @@ Always respond with ONLY valid JSON — no markdown fences, no extra text.
     "actions": []
 }
 
-Set ready_to_install to true ONLY when you have a complete installation plan
-and want to propose it to the user. Keep it false while gathering information.
+Set ready_to_install to true ONLY when you have a complete plan and want
+to propose it to the user. Keep it false while gathering information.
 
 ## ACTION TYPES (only when ready_to_install is true)
-[
-    {"type": "install", "package_id": "OpenJS.NodeJS",
-     "display_name": "Node.js", "check_command": "node"},
 
-    {"type": "run", "command": ["npm", "install", "-g", "typescript"],
-     "display_name": "TypeScript 글로벌 설치"},
+### Package install (winget)
+{"type": "install", "package_id": "OpenJS.NodeJS",
+ "display_name": "Node.js", "check_command": "node"}
 
-    {"type": "launch", "command": ["code"],
-     "display_name": "VS Code 실행"}
-]
+### Run command
+{"type": "run", "command": ["npm", "install", "-g", "typescript"],
+ "display_name": "TypeScript 글로벌 설치"}
+
+### Launch app
+{"type": "launch", "command": ["code"],
+ "display_name": "VS Code 실행"}
+
+### Container setup (Docker dev environment)
+{"type": "container_setup",
+ "image": "node:18-bullseye",
+ "container_name": "my-node-dev",
+ "workspace_path": "",
+ "ports": ["3000:3000"],
+ "display_name": "Node.js 개발 컨테이너"}
+
+container_setup notes:
+- Leave workspace_path empty — the app will use a sensible default.
+- The app auto-generates: .devcontainer/devcontainer.json, enter-dev.bat,
+  Windows Terminal profile, and opens VS Code/Cursor with the workspace.
+- Add a "launch" action for code/cursor AFTER container_setup so the IDE
+  is opened automatically.
+- Use container_setup when the user explicitly wants Docker/containers.
+- Ask the user: which stack (Node, Python, Go …) and which ports are needed.
 
 ## ALLOWED EXECUTABLES — ONLY these in "run" and "launch" actions
 winget, npm, npx, node, yarn, pnpm, pip, pip3, python, python3,
 git, code, cursor, cargo, rustup, go, dotnet, deno, bun,
-mvn, gradle, java, javac, choco
+mvn, gradle, java, javac, choco,
+docker, docker-compose, podman, wsl
 
 ## COMMON WINGET PACKAGE IDs
 - OpenJS.NodeJS            Node.js LTS
@@ -93,10 +117,12 @@ mvn, gradle, java, javac, choco
 
 ## WORKFLOW
 1. Greet and ask what dev environment they need
-2. Ask clarifying questions if needed (stack, editor preference, etc.)
+2. Ask clarifying questions if needed (stack, editor preference, containers?)
 3. When plan is clear: set ready_to_install=true with actions list
 4. The app will ask user to confirm, then execute the actions
-5. After you learn installation succeeded, guide next steps
+5. After installation succeeds, guide next steps
+6. If user shares a screenshot showing an error, analyze it and provide
+   specific step-by-step instructions to resolve the issue.
 
 Always respond in Korean. Be friendly and concise.
 """
@@ -134,6 +160,7 @@ class LLMClient:
         self.history: List[dict] = []
         self._env_context: str = ""
         self._history_context: str = ""
+        self._pending_image: Optional["ImageAttachment"] = None
         self._init_provider()
 
     # ── 컨텍스트 설정 (A/F) ──────────────────────────────────────────────────
@@ -242,22 +269,31 @@ class LLMClient:
 
     # ── B. 스트리밍 전송 ──────────────────────────────────────────────────────
 
-    def send_stream(self, user_message: str, on_chunk: Callable[[str], None]) -> LLMResponse:
+    def send_stream(
+        self,
+        user_message: str,
+        on_chunk: Callable[[str], None],
+        image: Optional["ImageAttachment"] = None,
+    ) -> LLMResponse:
         """
         스트리밍 LLM 호출.
 
         JSON 응답의 'message' 필드 내용만 실시간으로 on_chunk 콜백에 전달합니다.
+        image를 전달하면 비전 모드로 호출합니다 (히스토리에는 텍스트만 저장).
         완료 후 파싱된 LLMResponse를 반환합니다.
         """
         self.history.append({"role": "user", "content": user_message})
         system = self._get_system_prompt()
+        self._pending_image = image
 
         try:
             raw = self._stream_with_callback(system, on_chunk)
         except Exception:
-            # 스트리밍 실패 시 일반 전송으로 폴백
-            self.history.pop()  # 중복 추가 방지
+            self.history.pop()
+            self._pending_image = None
             return self.send(user_message)
+        finally:
+            self._pending_image = None
 
         self.history.append({"role": "assistant", "content": raw})
         return self._parse_response(raw)
@@ -318,27 +354,64 @@ class LLMClient:
 
     def _iter_raw_chunks(self, system: str) -> Iterator[str]:
         """각 프로바이더의 스트리밍 API를 통해 텍스트 청크를 yield합니다."""
+        img = self._pending_image
         if self.provider == "anthropic":
-            yield from self._iter_anthropic_stream(system)
+            yield from self._iter_anthropic_stream(system, img)
         elif self.provider == "openai":
-            yield from self._iter_openai_stream(system)
+            yield from self._iter_openai_stream(system, img)
         elif self.provider == "gemini":
-            yield from self._iter_gemini_stream()
+            yield from self._iter_gemini_stream(img)
         else:
-            yield from self._iter_ollama_stream(system)
+            yield from self._iter_ollama_stream(system, img)
 
-    def _iter_anthropic_stream(self, system: str) -> Iterator[str]:
+    def _iter_anthropic_stream(self, system: str, image=None) -> Iterator[str]:
+        messages = list(self.history)
+        if image:
+            last = messages[-1]
+            messages[-1] = {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.media_type,
+                            "data": image.base64_data,
+                        },
+                    },
+                    {"type": "text", "text": last["content"]},
+                ],
+            }
         with self._client.messages.stream(
             model=self.model,
             max_tokens=2048,
             system=system,
-            messages=self.history,
+            messages=messages,
         ) as stream:
             for text in stream.text_stream:
                 yield text
 
-    def _iter_openai_stream(self, system: str) -> Iterator[str]:
-        messages = [{"role": "system", "content": system}] + self.history
+    def _iter_openai_stream(self, system: str, image=None) -> Iterator[str]:
+        messages = [{"role": "system", "content": system}]
+        for msg in self.history[:-1]:
+            messages.append(msg)
+        last = self.history[-1]
+        if image:
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": last["content"]},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{image.media_type};base64,{image.base64_data}"
+                        },
+                    },
+                ],
+            })
+        else:
+            messages.append(last)
+
         stream = self._client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -350,20 +423,35 @@ class LLMClient:
             if delta:
                 yield delta
 
-    def _iter_gemini_stream(self) -> Iterator[str]:
+    def _iter_gemini_stream(self, image=None) -> Iterator[str]:
         chat = self._client.start_chat(history=[])
         for msg in self.history[:-1]:
             role = "user" if msg["role"] == "user" else "model"
             chat.history.append({"role": role, "parts": [msg["content"]]})
         last_msg = self.history[-1]["content"]
-        response = chat.send_message(last_msg, stream=True)
+        if image:
+            import base64 as _b64
+            image_part = {
+                "mime_type": image.media_type,
+                "data": _b64.b64decode(image.base64_data),
+            }
+            send_parts = [last_msg, image_part]
+        else:
+            send_parts = last_msg
+        response = chat.send_message(send_parts, stream=True)
         for chunk in response:
             if chunk.text:
                 yield chunk.text
 
-    def _iter_ollama_stream(self, system: str) -> Iterator[str]:
+    def _iter_ollama_stream(self, system: str, image=None) -> Iterator[str]:
         import requests
-        messages = [{"role": "system", "content": system}] + self.history
+        messages = [{"role": "system", "content": system}]
+        for msg in self.history[:-1]:
+            messages.append(msg)
+        last = dict(self.history[-1])
+        if image:
+            last["images"] = [image.base64_data]
+        messages.append(last)
         with requests.post(
             f"{self._base_url}/api/chat",
             json={"model": self.model, "messages": messages, "stream": True},
