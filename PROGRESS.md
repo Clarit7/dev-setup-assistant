@@ -1,6 +1,6 @@
 # 개발 진행상황
 
-> 최종 업데이트: 2026-03-15
+> 최종 업데이트: 2026-03-26
 
 ---
 
@@ -8,81 +8,94 @@
 
 ### v0.1 — 초기 구현 (`83519d1`)
 - [x] customtkinter 기반 채팅형 GUI 구현
-- [x] 상태머신 (`INIT → AWAITING_CONFIRM → INSTALLING → AWAITING_LAUNCH → DONE`)
+- [x] 상태머신 (`INIT → AWAITING_CONFIRM → INSTALLING → DONE`)
 - [x] JS 타이머 앱 시나리오 (Node.js + VSCode) 첫 구현
 - [x] winget을 통한 자동 설치 및 앱 실행 기능
 
 ### v0.2 — 모듈화 리팩터링 (`4144fae`)
-- [x] `core/safety.py` — 명령어 안전 검사 모듈 분리
-  - 화이트리스트: `winget`, `npm`, `pip`, `git`, `code` 등 허용 실행 파일 목록
-  - 블랙리스트: 시스템 경로 접근, 강제 삭제, 셸 인젝션, 시스템 종료 등 16개 위험 패턴
-- [x] `core/runner.py` — 안전 검사 통과 후 subprocess 실행 + 실시간 stdout 스트리밍
-- [x] `installers/base.py` — `BaseInstaller` 추상 클래스 (멀티 OS 확장 인터페이스)
-- [x] `installers/winget.py` — Windows winget 구현체
-- [x] `scenarios/base.py` — `Scenario` / `PackageSpec` / `LaunchSpec` 데이터 클래스
-- [x] `scenarios/registry.py` — 시나리오 등록 및 OS별 매칭 로직
-- [x] `scenarios/windows/js_timer.py` — JS 타이머 시나리오 모듈로 분리
+- [x] `core/safety.py` — 화이트리스트 + 블랙리스트 이중 명령어 검사
+- [x] `core/runner.py` — subprocess 실행 + 실시간 stdout 스트리밍
+- [x] `installers/base.py` / `winget.py` — OS별 패키지 관리자 추상화
+- [x] `scenarios/` — Scenario / PackageSpec / LaunchSpec 데이터 클래스 + 레지스트리
 
-### v0.3 — 테스트 스위트 추가 (`6470c9f`)
-- [x] `tests/test_safety.py` — 화이트리스트/블랙리스트/경로 처리 검증 (22개)
-- [x] `tests/test_runner.py` — 실행기 동작 검증
-- [x] `tests/test_scenarios.py` — 시나리오 매칭/패키지/실행 정보 검증
-- [x] `tests/test_installers.py` — 인스톨러 구현 검증
-- [x] 총 **52개 테스트** 전 통과
+### v0.3 — 테스트 스위트 (`6470c9f`)
+- [x] safety / runner / scenarios / installers 모듈 단위 테스트
+- [x] 총 52개 테스트 전 통과
 
-### v0.4 — 빌드 및 버그 수정 (`783441e`, `6db8ed3`)
-- [x] `DevSetupAssistant.spec` — PyInstaller 빌드 설정 추가
-- [x] `dist/DevSetupAssistant.exe` 빌드 성공
+### v0.4 — 빌드 및 버그 수정 (`6db8ed3`)
+- [x] `DevSetupAssistant.spec` — PyInstaller 빌드 설정
 - [x] customtkinter 5.2.2 + Windows 11 타이틀바 색상 버그 패치
-  - 원인: `_windows_set_titlebar_color` 내부에서 `str`을 callable로 잘못 호출
-  - 해결: `app.py` 상단에서 해당 메서드를 no-op 람다로 런타임 패치
 
-### v0.5 — 문서화 (`현재`)
-- [x] `README.md` 작성
-- [x] `PROGRESS.md` 작성 (이 파일)
+### v0.5 — LLM 연동 + A/B/C/F 기능 (`af2e382`)
+- [x] **A. 환경 자동 감지** — `core/env_detector.py`, 14개 도구 감지 후 LLM 컨텍스트 제공
+- [x] **B. 스트리밍 응답** — `core/llm.py`, JSON `message` 필드를 글자 단위 실시간 emit
+- [x] **C. LLM 설정 UI** — `ui/settings_dialog.py`, ⚙ 버튼으로 프로바이더·API 키 변경
+- [x] **F. 설치 이력** — `core/history.py`, `history.json` 기록 + LLM 컨텍스트 갱신
+- [x] 멀티 프로바이더 지원: Anthropic Claude / OpenAI GPT / Google Gemini / Ollama
+- [x] 웹 개발환경 시나리오 추가 (`scenarios/windows/web_dev.py`, 스택·에디터 2단계 선택)
+- [x] 전체 90개 테스트 통과
 
----
+### v0.6 — 컨테이너 연동(D) + 이미지 첨부(E) (`424042c`)
+- [x] **D. 컨테이너 연동**
+  - `core/container.py`: Docker 설치·실행 감지, 컨테이너 목록 조회
+  - `.devcontainer/devcontainer.json` 자동 생성 (VS Code / Cursor 자동 인식)
+  - `enter-dev.bat` / `enter-dev.sh` 진입 스크립트 자동 생성
+  - Windows Terminal 프로파일 자동 등록
+  - `core/ide_connector.py`: VS Code / Cursor 감지 + 워크스페이스 자동 열기
+  - 수동 조작 필요 시 단계별 안내 메시지 제공
+  - `core/actions.py`: `ContainerSetupAction` 추가
+  - `core/safety.py`: `docker`, `docker-compose`, `podman`, `wsl` 허용
+- [x] **E. 이미지 첨부 (스크린샷 LLM Q&A)**
+  - `ui/image_handler.py`: `Ctrl+V` 클립보드 이미지 감지, 파일 선택 로드, base64 인코딩
+  - `core/llm.py`: Anthropic / OpenAI / Gemini / Ollama 4개 프로바이더 비전 지원
+  - `app.py`: 📎 버튼, 이미지 미리보기 프레임 (숨김/표시 토글)
+  - Pillow 미설치 시 자동 비활성화
+- [x] `requirements.txt`: Pillow >= 10.0.0 추가
+- [x] `tests/test_container.py`: 55개 테스트 추가 → 전체 **145개 통과**
 
-## 진행 중
-
-없음 (현재 안정 버전)
-
----
-
-## 로드맵 (예정)
-
-| 우선순위 | 항목 | 비고 |
-|:---:|---|---|
-| 높음 | macOS brew 인스톨러 구현 | `installers/brew.py` |
-| 높음 | Linux apt 인스톨러 구현 | `installers/apt.py` |
-| 중간 | 추가 시나리오: Python Flask | `scenarios/windows/python_flask.py` |
-| 중간 | 추가 시나리오: React 앱 | `scenarios/windows/react_app.py` |
-| 중간 | 추가 시나리오: Java Spring | `scenarios/windows/java_spring.py` |
-| 낮음 | 앱 아이콘 (.ico) 적용 | PyInstaller spec 연동 |
-| 낮음 | README 스크린샷 추가 | |
-| 낮음 | 다크/라이트 모드 토글 UI | |
+### v0.7 — 주제 가드 (`732efe5`)
+- [x] **방법 1**: 시스템 프롬프트에 TOPIC GUARD 섹션 추가
+  - `topic_valid` 필드를 JSON 응답 스키마에 포함
+  - 개발환경 외 질문은 `topic_valid=false` + 거부 문장만 반환하도록 지시
+- [x] **방법 4**: 스트리밍 후 응답 교체
+  - 스트리밍 시작 직전 텍스트박스 인덱스 저장
+  - `topic_valid=false` 감지 시 해당 범위 삭제 → 고정 거부 메시지 표시
+  - LLM이 이미 스트리밍한 내용도 사용자에게 노출되지 않음
+- [x] `core/llm.py`: `LLMResponse.topic_valid` 필드 추가, `_parse_response` 반영
+- [x] `tests/test_topic_guard.py`: 14개 테스트 추가 → 전체 **159개 통과**
 
 ---
 
 ## 아키텍처 요약
 
 ```
-사용자 입력
+사용자 입력 (텍스트 / 이미지)
     │
     ▼
-scenarios/registry.py  ──  OS 감지 + 시나리오 매칭
+app.py  ── 상태머신 (CHATTING / AWAITING_CONFIRM / INSTALLING)
     │
-    ▼
-scenarios/*/           ──  PackageSpec 목록 반환
+    ├─► core/llm.py          멀티 프로바이더 LLM 클라이언트 (스트리밍, 비전)
+    │       └── TOPIC GUARD  topic_valid=false → 앱이 응답 교체
     │
-    ▼
-core/safety.py         ──  명령어 화이트리스트/블랙리스트 검사
+    ├─► core/actions.py      Install / Run / Launch / ContainerSetup 액션
     │
-    ▼
-core/runner.py         ──  subprocess 실행 + stdout 스트리밍
+    ├─► core/safety.py       화이트리스트 + 블랙리스트 이중 검사
     │
-    ▼
-installers/*.py        ──  OS별 install 명령어 생성
+    ├─► core/runner.py       subprocess 실행 + stdout 스트리밍
+    │
+    ├─► core/container.py    Docker 감지 / devcontainer.json / 진입 스크립트
+    │
+    ├─► core/ide_connector.py  IDE 감지 / 워크스페이스 열기 / 안내 메시지
+    │
+    ├─► core/env_detector.py   설치 도구 자동 감지 → LLM 컨텍스트
+    │
+    ├─► core/history.py        설치 이력 → LLM 컨텍스트
+    │
+    ├─► installers/winget.py   winget 명령어 생성
+    │
+    └─► ui/
+            settings_dialog.py   LLM 설정 다이얼로그
+            image_handler.py     클립보드·파일 이미지 → base64
 ```
 
 ---
@@ -90,6 +103,20 @@ installers/*.py        ──  OS별 install 명령어 생성
 ## 알려진 이슈
 
 | 상태 | 설명 | 해결 |
-|:---:|---|---|
-| 해결됨 | customtkinter 5.2.2 Windows 11 타이틀바 색상 버그 | `app.py` 런타임 패치 |
-| 미해결 | winget 출력 인코딩이 환경에 따라 UTF-16LE/UTF-8 혼용 | `mbcs` fallback으로 부분 대응 중 |
+|:---:|------|------|
+| 해결됨 | customtkinter 5.2.2 + Windows 11 타이틀바 색상 버그 | `app.py` 런타임 패치 |
+| 부분 대응 | winget 출력 인코딩 (UTF-16LE / UTF-8 혼용) | `mbcs` fallback 적용 |
+| 한계 | 주제 가드 — 적극적 프롬프트 조작은 방어 불가 | 방법 3(가드 LLM) 추가 시 개선 가능 |
+
+---
+
+## 로드맵
+
+| 우선순위 | 항목 |
+|:---:|------|
+| 높음 | macOS (brew) 인스톨러 구현 |
+| 높음 | Linux (apt) 인스톨러 구현 |
+| 중간 | 추가 시나리오: Java Spring, Rust, Go 등 |
+| 중간 | 주제 가드 방법 3 (가드 LLM 호출) 추가 |
+| 낮음 | 앱 아이콘 (.ico) 적용 |
+| 낮음 | README 스크린샷 추가 |
