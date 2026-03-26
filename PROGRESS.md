@@ -1,6 +1,6 @@
 # 개발 진행상황
 
-> 최종 업데이트: 2026-03-26
+> 최종 업데이트: 2026-03-26 (v0.9)
 
 ---
 
@@ -64,6 +64,33 @@
 - [x] `core/llm.py`: `LLMResponse.topic_valid` 필드 추가, `_parse_response` 반영
 - [x] `tests/test_topic_guard.py`: 14개 테스트 추가 → 전체 **159개 통과**
 
+### v0.8 — AI 코드 에이전트 설치 지원 (`a97d55e`)
+- [x] **G. AI 코드 에이전트 설치**
+  - 지원 에이전트: Claude Code / OpenAI Codex CLI / Gemini CLI / Aider / GitHub Copilot CLI
+  - `core/safety.py`: `claude`, `codex`, `gemini`, `aider`, `gh`, `cursor` 화이트리스트 추가
+  - `core/actions.py`: `SetEnvAction` 추가 — LLM이 API 키 등록 액션 제안 가능
+  - `app.py`: `_SecureInputDialog` (마스킹 입력), `_set_system_env` (레지스트리/셸 프로파일 영속 저장), `_validate_set_env` (환경변수명 화이트리스트 검증), `_prompt_env_key` (백그라운드-메인스레드 이벤트 동기화)
+  - `app.py`: `_start_installation` — `InstallAction` 없이 `RunAction`만 있어도 설치 진행 가능
+  - `scenarios/ai_agents.py`: `AIAgentsScenario` — Windows / macOS / Linux 크로스 플랫폼
+  - `scenarios/registry.py`: `AIAgentsScenario` 등록
+  - `tests/test_ai_agents.py`: 40개 테스트 추가 → 전체 **199개 통과**
+
+### v0.9 — 데이터베이스 CLI + 환경변수 지원 (`8c8468f`)
+- [x] **H. 데이터베이스 지원**
+  - `core/safety.py`: DB CLI 실행 파일 화이트리스트 추가
+    - PostgreSQL: `psql`, `pg_ctl`, `createdb`, `dropdb`, `initdb`
+    - MySQL: `mysql`, `mysqladmin`, `mysqldump`
+    - MongoDB: `mongod`, `mongosh`, `mongo`
+    - Redis: `redis-cli`, `redis-server`
+    - SQLite: `sqlite3`
+  - `app.py`: `_ALLOWED_ENV_KEYS`에 DB 연결 환경변수 추가
+    - `DATABASE_URL`, `POSTGRES_URL`, `POSTGRES_PASSWORD`
+    - `MYSQL_URL`, `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`
+    - `MONGODB_URL`, `MONGO_INITDB_ROOT_PASSWORD`
+    - `REDIS_URL`, `REDIS_PASSWORD`
+  - Docker 방식은 기존 `ContainerSetupAction`으로 완전 지원 (변경 없음)
+  - `tests/test_ai_agents.py`: DB 테스트 14개 추가 → 전체 **213개 통과**
+
 ---
 
 ## 아키텍처 요약
@@ -77,9 +104,9 @@ app.py  ── 상태머신 (CHATTING / AWAITING_CONFIRM / INSTALLING)
     ├─► core/llm.py          멀티 프로바이더 LLM 클라이언트 (스트리밍, 비전)
     │       └── TOPIC GUARD  topic_valid=false → 앱이 응답 교체
     │
-    ├─► core/actions.py      Install / Run / Launch / ContainerSetup 액션
+    ├─► core/actions.py      Install / Run / Launch / ContainerSetup / SetEnv 액션
     │
-    ├─► core/safety.py       화이트리스트 + 블랙리스트 이중 검사
+    ├─► core/safety.py       화이트리스트 + 블랙리스트 이중 검사 (AI 에이전트·DB CLI 포함)
     │
     ├─► core/runner.py       subprocess 실행 + stdout 스트리밍
     │
@@ -93,9 +120,12 @@ app.py  ── 상태머신 (CHATTING / AWAITING_CONFIRM / INSTALLING)
     │
     ├─► installers/winget.py   winget 명령어 생성
     │
+    ├─► scenarios/ai_agents.py  AI 코드 에이전트 시나리오 (크로스 플랫폼)
+    │
     └─► ui/
             settings_dialog.py   LLM 설정 다이얼로그
             image_handler.py     클립보드·파일 이미지 → base64
+            (_SecureInputDialog)  API 키·DB 비밀번호 마스킹 입력 (app.py 내)
 ```
 
 ---
@@ -118,5 +148,6 @@ app.py  ── 상태머신 (CHATTING / AWAITING_CONFIRM / INSTALLING)
 | 높음 | Linux (apt) 인스톨러 구현 |
 | 중간 | 추가 시나리오: Java Spring, Rust, Go 등 |
 | 중간 | 주제 가드 방법 3 (가드 LLM 호출) 추가 |
+| 중간 | DB 서비스 기동/중지 지원 (Windows 서비스 관리) |
 | 낮음 | 앱 아이콘 (.ico) 적용 |
 | 낮음 | README 스크린샷 추가 |

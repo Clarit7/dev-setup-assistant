@@ -1,7 +1,8 @@
 # 개발환경 세팅 도우미 (DevSetupAssistant)
 
-채팅형 GUI에서 LLM과 대화하며 개발환경을 자동으로 구성하는 Windows 데스크톱 앱입니다.
+채팅형 GUI에서 LLM과 대화하며 개발환경을 자동으로 구성하는 데스크톱 앱입니다.
 무엇을 만들고 싶은지 자유롭게 입력하면, 필요한 도구를 설치하고 Docker 컨테이너까지 세팅합니다.
+AI 코드 에이전트(Claude Code, Codex CLI, Gemini CLI, Aider 등)와 데이터베이스(PostgreSQL, MySQL, MongoDB, Redis)도 지원합니다.
 
 ---
 
@@ -15,8 +16,10 @@
 | **D. 컨테이너 연동** | Docker 이미지 pull·컨테이너 생성, `.devcontainer/devcontainer.json` 자동 생성, 진입 스크립트(`enter-dev.bat` / `enter-dev.sh`), Windows Terminal 프로파일 자동 등록, VS Code·Cursor 워크스페이스 자동 열기 |
 | **E. 이미지 첨부** | 스크린샷을 `Ctrl+V`로 붙여넣거나 📎 버튼으로 파일 선택 → LLM 비전 API로 문제 분석 |
 | **F. 설치 이력** | 설치 결과를 `history.json`에 기록하여 LLM이 중복 설치를 피할 수 있도록 컨텍스트 제공 |
+| **G. AI 에이전트 설치** | Claude Code / OpenAI Codex CLI / Gemini CLI / Aider / GitHub Copilot CLI 설치 + API 키를 마스킹 다이얼로그로 수집하여 시스템 환경변수에 영속 등록 |
+| **H. DB 지원** | PostgreSQL / MySQL / MongoDB / Redis / SQLite CLI 허용, DB 연결 환경변수(`DATABASE_URL` 등) `SetEnvAction`으로 등록 가능, Docker 컨테이너 방식 완전 지원 |
 | **주제 가드** | 개발환경 세팅 외 질문은 LLM이 `topic_valid=false`로 표시 → 앱이 응답을 교체하여 오남용 방지 |
-| **보안 검사** | 모든 명령어를 화이트리스트 + 블랙리스트 이중 검사 후 실행 |
+| **보안 검사** | 모든 명령어를 화이트리스트 + 블랙리스트 이중 검사 후 실행, API 키·DB 비밀번호는 허용 키 화이트리스트로 추가 검증 |
 
 ---
 
@@ -101,6 +104,36 @@ pyinstaller DevSetupAssistant.spec
 3. VS Code가 열리면 우측 하단의 **Reopen in Container** 버튼을 클릭합니다.
    - 버튼이 보이지 않으면 `Ctrl+Shift+P` → `Dev Containers: Reopen in Container`
 
+### AI 코드 에이전트 설치
+
+1. 원하는 에이전트를 채팅창에 입력합니다.
+   - 예: `Claude Code 설치해줘`, `Aider 써보고 싶어`
+2. AI가 설치 계획을 제안하면 `Y`를 입력합니다.
+3. 설치가 끝나면 API 키 입력 다이얼로그가 나타납니다 (마스킹 처리).
+4. 입력된 키는 시스템 환경변수에 영속 저장됩니다.
+   - Windows: `HKCU\Environment` 레지스트리
+   - macOS/Linux: `~/.zshrc` 또는 `~/.bashrc`
+
+지원 에이전트:
+
+| 에이전트 | 설치 방법 | 인증 |
+|---------|---------|------|
+| **Claude Code** | npm | `ANTHROPIC_API_KEY` |
+| **OpenAI Codex CLI** | npm | `OPENAI_API_KEY` |
+| **Gemini CLI** | npm | `GEMINI_API_KEY` |
+| **Aider** | pip | `ANTHROPIC_API_KEY` 등 |
+| **GitHub Copilot CLI** | gh extension | `gh auth login` |
+
+### 데이터베이스 설치
+
+Docker 방식 (권장):
+- 예: `Docker로 PostgreSQL 개발 DB 만들어줘`
+- 컨테이너 자동 생성 + `.devcontainer/devcontainer.json` 포함
+
+로컬 설치:
+- 예: `PostgreSQL 로컬 설치해줘`
+- 설치 후 `POSTGRES_PASSWORD` 등 연결 환경변수를 마스킹 다이얼로그로 설정
+
 ### 스크린샷으로 문제 해결
 
 안내대로 했는데 오류가 발생하는 경우:
@@ -119,7 +152,7 @@ dev-setup-assistant/
 │
 ├── core/
 │   ├── llm.py                   # 멀티 프로바이더 LLM 클라이언트 (스트리밍, 비전)
-│   ├── actions.py               # 액션 정의 (Install / Run / Launch / ContainerSetup)
+│   ├── actions.py               # 액션 정의 (Install / Run / Launch / ContainerSetup / SetEnv)
 │   ├── runner.py                # 명령어 실행기 (실시간 stdout 스트리밍)
 │   ├── safety.py                # 명령어 안전 검사 (화이트리스트 + 블랙리스트)
 │   ├── env_detector.py          # 설치된 개발 도구 자동 감지
@@ -138,6 +171,7 @@ dev-setup-assistant/
 ├── scenarios/
 │   ├── base.py                  # Scenario / PackageSpec / LaunchSpec
 │   ├── registry.py              # 시나리오 등록 및 OS별 매칭
+│   ├── ai_agents.py             # AI 코드 에이전트 시나리오 (크로스 플랫폼)
 │   └── windows/
 │       ├── js_timer.py          # JS 타이머 앱 시나리오
 │       └── web_dev.py           # 웹 개발환경 시나리오 (스택·에디터 선택)
@@ -149,7 +183,8 @@ dev-setup-assistant/
     ├── test_installers.py       # 인스톨러 테스트
     ├── test_web_dev_scenario.py # 웹 개발 시나리오 테스트
     ├── test_container.py        # 컨테이너 기능 테스트
-    └── test_topic_guard.py      # 주제 가드 테스트
+    ├── test_topic_guard.py      # 주제 가드 테스트
+    └── test_ai_agents.py        # AI 에이전트 + DB 지원 테스트
 ```
 
 ---
@@ -190,8 +225,27 @@ CHATTING  (다음 단계 안내 계속)
 
 **화이트리스트** — 허용된 실행 파일만 통과
 ```
-winget, npm, node, pip, python, git, code, cursor,
-docker, docker-compose, podman, wsl, cargo, go, dotnet, ...
+# 패키지 관리자
+winget, choco, brew, apt, apt-get, snap, dnf, yum
+# JS / Python / 기타 런타임
+npm, npx, node, yarn, pip, pip3, python, git, code, cursor
+cargo, go, dotnet, mvn, gradle, java
+# 컨테이너
+docker, docker-compose, podman, wsl
+# AI 코드 에이전트
+claude, codex, gemini, aider, gh
+# 데이터베이스 CLI
+psql, pg_ctl, createdb, mysql, mysqladmin, mysqldump
+mongod, mongosh, redis-cli, redis-server, sqlite3
+```
+
+**SetEnvAction 허용 키** — API 키·DB 비밀번호는 별도 화이트리스트로 추가 검증
+```
+ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, GITHUB_TOKEN
+DATABASE_URL, POSTGRES_URL, POSTGRES_PASSWORD
+MYSQL_URL, MYSQL_ROOT_PASSWORD, MYSQL_PASSWORD
+MONGODB_URL, MONGO_INITDB_ROOT_PASSWORD
+REDIS_URL, REDIS_PASSWORD
 ```
 
 **블랙리스트** — 아래 패턴은 허용된 실행 파일에서도 차단
@@ -213,7 +267,7 @@ docker, docker-compose, podman, wsl, cargo, go, dotnet, ...
 python -m pytest tests/ -v
 ```
 
-159개 테스트 통과 (3개 skip — Pillow 미설치 환경)
+213개 테스트 통과 (3개 skip — Pillow 미설치 환경)
 
 ---
 
