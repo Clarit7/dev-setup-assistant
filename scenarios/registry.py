@@ -10,13 +10,27 @@ from typing import Optional
 from .base import Scenario
 from .windows.js_timer import JSTimerScenario
 from .windows.web_dev import WebDevScenario
+from .windows.cpp_dev import CppDevScenario
+from .windows.java_dev import JavaDevScenario
+from .windows.rust_dev import RustDevScenario
+from .windows.go_dev import GoDevScenario
+from .windows.dotnet_dev import DotNetDevScenario
+from .windows.game_dev import GameDevScenario
 from .ai_agents import AIAgentsScenario
 
 # ── 등록된 시나리오 목록 ─────────────────────────────────────────────────────
 _ALL_SCENARIOS: list = [
+    # Windows 전용 시나리오
     JSTimerScenario(),
     WebDevScenario(),
-    AIAgentsScenario(),   # 크로스 플랫폼 (windows / macos / linux)
+    CppDevScenario(),
+    JavaDevScenario(),
+    RustDevScenario(),
+    GoDevScenario(),
+    DotNetDevScenario(),
+    GameDevScenario(),
+    # 크로스 플랫폼 시나리오
+    AIAgentsScenario(),
 ]
 
 

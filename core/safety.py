@@ -28,6 +28,13 @@ ALLOWED_EXECUTABLES = {
     "aider",    # Aider
     "gh",       # GitHub CLI (gh extension install github/gh-copilot)
     "cursor",   # Cursor IDE 런처
+    # C / C++ 빌드 도구
+    "gcc", "g++", "cc", "c++",          # GCC / MinGW
+    "clang", "clang++",                  # LLVM Clang
+    "cmake", "ctest", "cpack",           # CMake
+    "make", "nmake", "mingw32-make",     # Make
+    "meson", "ninja",                    # Meson + Ninja
+    "gdb", "lldb",                       # 디버거
     # 데이터베이스 CLI
     "psql", "pg_ctl", "createdb", "dropdb", "initdb",   # PostgreSQL
     "mysql", "mysqladmin", "mysqldump",                  # MySQL / MariaDB
