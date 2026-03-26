@@ -5,7 +5,7 @@ LLM은 JSON으로 액션 목록을 반환합니다.
 각 액션은 실행 전 safety checker를 통과해야 합니다.
 """
 from dataclasses import dataclass, field
-from typing import List, Union
+from typing import List, Optional, Union
 
 
 @dataclass
@@ -48,7 +48,20 @@ class ContainerSetupAction:
     display_name: str
 
 
-Action = Union[InstallAction, RunAction, LaunchAction, ContainerSetupAction]
+@dataclass
+class SetEnvAction:
+    """사용자로부터 API 키 등 환경변수 값을 입력받아 시스템에 영속 등록
+
+    - Windows: HKCU\\Environment 레지스트리에 저장 (로그인 유지)
+    - macOS / Linux: ~/.zshrc 또는 ~/.bashrc에 export 라인 추가
+    LLM이 제안하는 key는 _ALLOWED_ENV_KEYS 화이트리스트로 검증합니다.
+    """
+    key: str           # 환경변수명  (예: "ANTHROPIC_API_KEY")
+    display_name: str  # 사용자에게 보여줄 이름  (예: "Anthropic API 키")
+    hint: str = ""     # 입력 힌트  (예: "sk-ant-...")
+
+
+Action = Union[InstallAction, RunAction, LaunchAction, ContainerSetupAction, SetEnvAction]
 
 
 def parse_actions(raw_actions: list) -> List[Action]:
@@ -84,6 +97,13 @@ def parse_actions(raw_actions: list) -> List[Action]:
                 display_name=item.get("display_name", ""),
             ))
 
+        elif action_type == "set_env":
+            result.append(SetEnvAction(
+                key=item.get("key", ""),
+                display_name=item.get("display_name", ""),
+                hint=item.get("hint", ""),
+            ))
+
         elif action_type == "container_setup":
             ports = item.get("ports", [])
             if isinstance(ports, str):
@@ -113,4 +133,6 @@ def format_actions_for_display(actions: List[Action]) -> str:
             ports_str = ", ".join(action.ports) if action.ports else "없음"
             lines.append(f"  🐳 컨테이너: {action.display_name} ({action.image})")
             lines.append(f"      포트: {ports_str}")
+        elif isinstance(action, SetEnvAction):
+            lines.append(f"  🔑 환경변수: {action.display_name} ({action.key})")
     return "\n".join(lines)

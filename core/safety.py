@@ -21,6 +21,13 @@ ALLOWED_EXECUTABLES = {
     "mvn", "gradle", "java", "javac",
     # 컨테이너
     "docker", "docker-compose", "podman", "wsl",
+    # AI 코드 에이전트
+    "claude",   # Claude Code (Anthropic)
+    "codex",    # OpenAI Codex CLI
+    "gemini",   # Gemini CLI (Google)
+    "aider",    # Aider
+    "gh",       # GitHub CLI (gh extension install github/gh-copilot)
+    "cursor",   # Cursor IDE 런처
 }
 
 # ── 위험한 인자 패턴 (허용된 실행 파일 내에서도 차단) ─────────────────────

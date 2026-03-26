@@ -38,7 +38,7 @@ ctk.CTk._windows_set_titlebar_color = lambda self, color_mode: None
 from core.safety import is_safe_command
 from core.runner import run_command
 from core.actions import (
-    Action, InstallAction, RunAction, LaunchAction, ContainerSetupAction,
+    Action, InstallAction, RunAction, LaunchAction, ContainerSetupAction, SetEnvAction,
     format_actions_for_display,
 )
 from core.llm import LLMClient, LLMResponse
@@ -70,6 +70,17 @@ _INSTALLERS = {
 
 # winget 패키지 ID 허용 패턴 (Publisher.PackageName 형식)
 _PACKAGE_ID_RE = re.compile(r"^[\w][\w.-]+\.[\w][\w.-]+$")
+
+# LLM이 set_env 액션으로 설정할 수 있는 환경변수 화이트리스트
+_ALLOWED_ENV_KEYS = {
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GITHUB_TOKEN",
+}
+# 환경변수명 형식: 대문자·숫자·밑줄, 3~60자
+_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,59}$")
 # Docker 이미지 이름 허용 패턴 (예: node:18, python:3.11-slim, ghcr.io/org/img:tag)
 _DOCKER_IMAGE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._/-]*(:[\w][\w.-]*)?$"
@@ -89,6 +100,77 @@ def _get_installer():
 def _default_workspace(container_name: str) -> str:
     """컨테이너 이름 기반 기본 워크스페이스 경로"""
     return str(_DEFAULT_WORKSPACE_ROOT / container_name)
+
+
+def _set_system_env(key: str, value: str) -> bool:
+    """플랫폼별로 환경변수를 영속적으로 저장합니다.
+
+    Windows : HKCU\\Environment 레지스트리에 저장
+    macOS/Linux : ~/.zshrc 또는 ~/.bashrc 에 export 라인 추가
+    현재 프로세스 환경에도 즉시 반영합니다.
+    """
+    import platform
+    os.environ[key] = value  # 현재 프로세스 즉시 반영
+
+    system = platform.system()
+    if system == "Windows":
+        try:
+            import winreg
+            reg = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE
+            )
+            winreg.SetValueEx(reg, key, 0, winreg.REG_SZ, value)
+            winreg.CloseKey(reg)
+            # 변경사항을 로그인 세션 전체에 브로드캐스트
+            import ctypes
+            ctypes.windll.user32.SendMessageW(0xFFFF, 0x001A, 0, "Environment")
+            return True
+        except Exception:
+            return False
+    else:  # macOS / Linux
+        shell = os.environ.get("SHELL", "/bin/bash")
+        profile = Path.home() / (".zshrc" if "zsh" in shell else ".bashrc")
+        try:
+            with open(profile, "a", encoding="utf-8") as f:
+                f.write(f'\nexport {key}="{value}"\n')
+            return True
+        except Exception:
+            return False
+
+
+class _SecureInputDialog(ctk.CTkToplevel):
+    """API 키 입력을 위한 마스킹 입력 다이얼로그 (show='*')"""
+
+    def __init__(self, parent, title: str, text: str):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("440x200")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+        self._value: str = ""
+
+        ctk.CTkLabel(
+            self, text=text, wraplength=400,
+            font=("Malgun Gothic", 13), justify="left",
+        ).pack(padx=20, pady=(20, 8), anchor="w")
+
+        self._entry = ctk.CTkEntry(
+            self, show="*", width=400, font=("Malgun Gothic", 13)
+        )
+        self._entry.pack(padx=20, pady=4)
+        self._entry.bind("<Return>", lambda _: self._confirm())
+        self._entry.focus()
+
+        ctk.CTkButton(self, text="확인", command=self._confirm).pack(pady=12)
+
+    def _confirm(self):
+        self._value = self._entry.get()
+        self.destroy()
+
+    def get_input(self) -> str:
+        self.wait_window()
+        return self._value
 
 
 # ── GUI ──────────────────────────────────────────────────────────────────────
@@ -506,6 +588,12 @@ class DevSetupApp(ctk.CTk):
                     action if ok else (action.display_name, reason)
                 )
 
+            elif isinstance(action, SetEnvAction):
+                ok, reason = self._validate_set_env(action)
+                (safe if ok else blocked).append(
+                    action if ok else (action.display_name, reason)
+                )
+
         return safe, blocked
 
     @staticmethod
@@ -515,6 +603,15 @@ class DevSetupApp(ctk.CTk):
             return False, "패키지 ID가 비어 있습니다."
         if not _PACKAGE_ID_RE.match(pid):
             return False, f"잘못된 패키지 ID 형식: '{pid}'"
+        return True, ""
+
+    @staticmethod
+    def _validate_set_env(action: SetEnvAction) -> tuple:
+        key = action.key.strip()
+        if not _ENV_KEY_RE.match(key):
+            return False, f"잘못된 환경변수명 형식: '{key}'"
+        if key not in _ALLOWED_ENV_KEYS:
+            return False, f"허용되지 않은 환경변수: '{key}' (화이트리스트에 없음)"
         return True, ""
 
     @staticmethod
@@ -534,7 +631,10 @@ class DevSetupApp(ctk.CTk):
     # ── 설치 실행 ────────────────────────────────────────────────────────────
 
     def _start_installation(self):
-        if not self.installer:
+        has_install_actions = any(
+            isinstance(a, InstallAction) for a in self.pending_actions
+        )
+        if has_install_actions and not self.installer:
             self._append_message(
                 "AI",
                 "winget을 찾을 수 없습니다.\n"
@@ -550,10 +650,11 @@ class DevSetupApp(ctk.CTk):
 
     def _run_installation(self):
         """백그라운드에서 액션들을 순서대로 실행합니다."""
-        install_actions  = [a for a in self.pending_actions if isinstance(a, InstallAction)]
-        run_actions      = [a for a in self.pending_actions if isinstance(a, RunAction)]
+        install_actions   = [a for a in self.pending_actions if isinstance(a, InstallAction)]
+        run_actions       = [a for a in self.pending_actions if isinstance(a, RunAction)]
+        set_env_actions   = [a for a in self.pending_actions if isinstance(a, SetEnvAction)]
         container_actions = [a for a in self.pending_actions if isinstance(a, ContainerSetupAction)]
-        launch_actions   = [a for a in self.pending_actions if isinstance(a, LaunchAction)]
+        launch_actions    = [a for a in self.pending_actions if isinstance(a, LaunchAction)]
 
         success = True
         recorded_packages: List[str] = []
@@ -589,7 +690,13 @@ class DevSetupApp(ctk.CTk):
             if not ok:
                 success = False
 
-        # 3) D: 컨테이너 세팅
+        # 3) API 키 등 환경변수 설정 (사용자 입력 필요 → 메인 스레드 다이얼로그)
+        for action in set_env_actions:
+            done = threading.Event()
+            self.after(0, self._prompt_env_key, action, done)
+            done.wait(timeout=300)  # 최대 5분 대기
+
+        # 4) D: 컨테이너 세팅
         for action in container_actions:
             self._run_container_setup(action)
             recorded_packages.append(action.display_name)
@@ -597,6 +704,27 @@ class DevSetupApp(ctk.CTk):
         self.after(
             0, self._on_installation_done, success, launch_actions, recorded_packages
         )
+
+    def _prompt_env_key(self, action: SetEnvAction, done: threading.Event):
+        """메인 스레드에서 API 키 입력 다이얼로그를 표시하고 시스템 환경변수를 설정합니다."""
+        hint_text = f"힌트: {action.hint}" if action.hint else ""
+        dialog = _SecureInputDialog(
+            self,
+            title=action.display_name,
+            text=f"{action.display_name} ({action.key}) 를 입력하세요.\n{hint_text}",
+        )
+        value = dialog.get_input()
+        if value and value.strip():
+            ok = _set_system_env(action.key, value.strip())
+            msg = (
+                f"✓ {action.key} 설정 완료\n"
+                if ok else
+                f"⚠️  {action.key} 시스템 등록 실패 — 수동으로 환경변수를 설정해주세요.\n"
+            )
+        else:
+            msg = f"⚠️  {action.display_name} 입력이 취소됐습니다.\n"
+        self._append_text(msg)
+        done.set()
 
     def _run_container_setup(self, action: ContainerSetupAction):
         """D: ContainerSetupAction 실행 — Docker 컨테이너 생성 + 파일 생성 + 안내"""

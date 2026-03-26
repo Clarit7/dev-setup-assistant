@@ -104,10 +104,13 @@ class TestRegistry(unittest.TestCase):
             supported = list_supported_scenarios()
         self.assertGreater(len(supported), 0)
 
-    def test_list_supported_on_linux_empty(self):
+    def test_list_supported_on_linux_has_ai_agents(self):
+        from scenarios.ai_agents import AIAgentsScenario
         with patch("scenarios.registry.get_current_os", return_value="linux"):
             supported = list_supported_scenarios()
-        self.assertEqual(len(supported), 0)  # 현재 linux 시나리오 없음
+        # AIAgentsScenario는 linux도 지원
+        self.assertGreater(len(supported), 0)
+        self.assertTrue(any(isinstance(s, AIAgentsScenario) for s in supported))
 
 
 if __name__ == "__main__":

@@ -10,11 +10,13 @@ from typing import Optional
 from .base import Scenario
 from .windows.js_timer import JSTimerScenario
 from .windows.web_dev import WebDevScenario
+from .ai_agents import AIAgentsScenario
 
 # ── 등록된 시나리오 목록 ─────────────────────────────────────────────────────
 _ALL_SCENARIOS: list = [
     JSTimerScenario(),
     WebDevScenario(),
+    AIAgentsScenario(),   # 크로스 플랫폼 (windows / macos / linux)
 ]
 
 
