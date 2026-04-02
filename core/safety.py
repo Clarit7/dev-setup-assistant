@@ -7,6 +7,9 @@
 import re
 from typing import List, Tuple
 
+# ── 세션 동적 화이트리스트 (앱 종료 시 소멸) ─────────────────────────────────
+_DYNAMIC_WHITELIST: set = set()
+
 # ── 허용된 실행 파일 목록 (이 외의 실행 파일은 모두 차단) ──────────────────
 ALLOWED_EXECUTABLES = {
     # 패키지 관리자
@@ -75,9 +78,42 @@ DANGEROUS_PATTERNS: List[Tuple[str, str]] = [
 ]
 
 
+def get_exe_name(cmd: List[str]) -> str:
+    """명령어 리스트에서 실행 파일명을 추출합니다 (경로·.exe 제거, 소문자)."""
+    if not cmd:
+        return ""
+    exe_raw = cmd[0].replace("\\", "/").split("/")[-1].lower()
+    return exe_raw[:-4] if exe_raw.endswith(".exe") else exe_raw
+
+
+def is_in_dynamic_whitelist(exe: str) -> bool:
+    """세션 동적 화이트리스트에 해당 실행 파일이 있는지 확인합니다."""
+    return exe.lower() in _DYNAMIC_WHITELIST
+
+
+def add_to_dynamic_whitelist(exe: str) -> None:
+    """세션 동적 화이트리스트에 실행 파일을 추가합니다."""
+    _DYNAMIC_WHITELIST.add(exe.lower())
+
+
+def is_in_blacklist(cmd: List[str]) -> Tuple[bool, str]:
+    """
+    블랙리스트 패턴만 검사합니다 (화이트리스트 무관).
+    Returns:
+        (True,  "사유") — 블랙리스트 매칭
+        (False, "")     — 이상 없음
+    """
+    full_str = " ".join(cmd)
+    for pattern, reason in DANGEROUS_PATTERNS:
+        if re.search(pattern, full_str, re.IGNORECASE):
+            return True, reason
+    return False, ""
+
+
 def is_safe_command(cmd: List[str]) -> Tuple[bool, str]:
     """
     명령어 리스트를 검사합니다.
+    화이트리스트(정적 + 동적) 확인 → 블랙리스트 패턴 확인 순서입니다.
     Returns:
         (True, "")           — 안전
         (False, "사유")      — 차단
@@ -85,16 +121,13 @@ def is_safe_command(cmd: List[str]) -> Tuple[bool, str]:
     if not cmd:
         return False, "빈 명령어입니다."
 
-    # 실행 파일명 추출 (전체 경로 및 .exe 확장자 제거)
-    exe_raw = cmd[0].replace("\\", "/").split("/")[-1].lower()
-    exe_name = exe_raw[:-4] if exe_raw.endswith(".exe") else exe_raw
+    exe_name = get_exe_name(cmd)
 
-    if exe_name not in ALLOWED_EXECUTABLES:
+    if exe_name not in ALLOWED_EXECUTABLES and not is_in_dynamic_whitelist(exe_name):
         return False, f"허용되지 않은 실행 파일: '{cmd[0]}'"
 
-    full_str = " ".join(cmd)
-    for pattern, reason in DANGEROUS_PATTERNS:
-        if re.search(pattern, full_str, re.IGNORECASE):
-            return False, reason
+    in_bl, reason = is_in_blacklist(cmd)
+    if in_bl:
+        return False, reason
 
     return True, ""

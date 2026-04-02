@@ -86,7 +86,7 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, parent: ctk.CTk, on_apply: Optional[Callable] = None):
         super().__init__(parent)
         self.title("LLM 설정")
-        self.geometry("480x400")
+        self.geometry("480x470")
         self.resizable(False, False)
         self.grab_set()   # 모달: 다른 창 클릭 차단
         self.lift()
@@ -159,9 +159,31 @@ class SettingsDialog(ctk.CTkToplevel):
             placeholder_text="http://localhost:11434",
         )
 
+        # ── LLM 안전성 설정 ──
+        ctk.CTkLabel(
+            self, text="명령어 안전성 설정",
+            font=("Malgun Gothic", 13, "bold"), anchor="w",
+        ).pack(fill="x", padx=24, pady=(12, 2))
+
+        self._auto_caution_var = ctk.BooleanVar(
+            value=self._env.get("LLM_SAFETY_AUTO_CAUTION", "0") == "1"
+        )
+        ctk.CTkCheckBox(
+            self,
+            text="주의 명령어 자동 허용",
+            font=("Malgun Gothic", 13),
+            variable=self._auto_caution_var,
+        ).pack(anchor="w", padx=28, pady=(2, 0))
+        ctk.CTkLabel(
+            self,
+            text="화이트리스트에 없지만 LLM이 '주의'로 판정한 명령어를 확인 없이 허용합니다",
+            font=("Malgun Gothic", 11), text_color="gray60",
+            anchor="w", wraplength=420,
+        ).pack(fill="x", padx=44, pady=(0, 6))
+
         # ── 버튼 ──
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=24, pady=(20, 24))
+        btn_frame.pack(fill="x", padx=24, pady=(10, 20))
 
         ctk.CTkButton(
             btn_frame, text="저장 & 적용", font=("Malgun Gothic", 13),
@@ -239,6 +261,8 @@ class SettingsDialog(ctk.CTkToplevel):
             url = self._url_entry.get().strip()
             if url:
                 new_env["OLLAMA_BASE_URL"] = url
+
+        new_env["LLM_SAFETY_AUTO_CAUTION"] = "1" if self._auto_caution_var.get() else "0"
 
         _save_env(new_env)
         self.destroy()

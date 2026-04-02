@@ -35,7 +35,10 @@ from tkinter import filedialog
 # customtkinter 5.2.2 + Windows 11 버그 패치
 ctk.CTk._windows_set_titlebar_color = lambda self, color_mode: None
 
-from core.safety import is_safe_command
+from core.safety import (
+    is_safe_command, is_in_blacklist, is_in_dynamic_whitelist,
+    add_to_dynamic_whitelist, get_exe_name, ALLOWED_EXECUTABLES,
+)
 from core.runner import run_command
 from core.actions import (
     Action, InstallAction, RunAction, LaunchAction, ContainerSetupAction, SetEnvAction,
@@ -183,6 +186,65 @@ class _SecureInputDialog(ctk.CTkToplevel):
     def get_input(self) -> str:
         self.wait_window()
         return self._value
+
+
+class _CautionConfirmDialog(ctk.CTkToplevel):
+    """LLM이 '주의' 판정한 명령어를 사용자가 허용할지 묻는 다이얼로그"""
+
+    def __init__(self, parent, cmd_str: str, reason: str):
+        super().__init__(parent)
+        self.title("⚠️  주의 명령어 확인")
+        self.geometry("500x260")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+        self.focus_force()
+        self._allowed = False
+
+        ctk.CTkLabel(
+            self, text="⚠️  주의가 필요한 명령어입니다",
+            font=("Malgun Gothic", 15, "bold"), text_color="orange",
+        ).pack(padx=20, pady=(18, 6))
+
+        ctk.CTkLabel(
+            self, text=cmd_str,
+            font=("Consolas", 13), text_color="gray90",
+            wraplength=460, justify="left",
+        ).pack(padx=20, pady=(0, 4))
+
+        ctk.CTkLabel(
+            self, text=reason,
+            font=("Malgun Gothic", 12), text_color="gray60",
+            wraplength=460, justify="left",
+        ).pack(padx=20, pady=(0, 14))
+
+        ctk.CTkLabel(
+            self, text="이 명령어를 실행하시겠습니까?\n(허용하면 이번 세션 동안 화이트리스트에 추가됩니다)",
+            font=("Malgun Gothic", 12),
+            wraplength=460, justify="center",
+        ).pack(padx=20, pady=(0, 14))
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(0, 18))
+
+        ctk.CTkButton(
+            btn_frame, text="허용", width=100, font=("Malgun Gothic", 13),
+            command=self._on_allow,
+        ).pack(side="right", padx=(8, 0))
+
+        ctk.CTkButton(
+            btn_frame, text="차단", width=100, font=("Malgun Gothic", 13),
+            fg_color="gray40", hover_color="gray30",
+            command=self.destroy,
+        ).pack(side="right")
+
+    def _on_allow(self):
+        self._allowed = True
+        self.destroy()
+
+    def get_result(self) -> bool:
+        self.wait_window()
+        return self._allowed
 
 
 # ── GUI ──────────────────────────────────────────────────────────────────────
@@ -560,7 +622,108 @@ class DevSetupApp(ctk.CTk):
     # ── 액션 제안 및 안전 검증 ─────────────────────────────────────────────────
 
     def _propose_actions(self, actions: List[Action]):
-        safe_actions, blocked = self._validate_actions(actions)
+        """
+        액션을 분류합니다:
+          safe    — 화이트리스트(정적+동적) 통과 + 블랙리스트 없음
+          blocked — 블랙리스트 매칭 또는 형식 오류
+          unknown — 화이트리스트에 없으나 블랙리스트도 아닌 run/launch 액션
+                    → LLM 안전성 검사가 필요합니다.
+        """
+        safe_actions: List[Action] = []
+        blocked: list = []
+        unknown: List[Action] = []
+
+        for action in actions:
+            if isinstance(action, (RunAction, LaunchAction)):
+                # 1) 블랙리스트 먼저 확인 (항상 차단)
+                in_bl, bl_reason = is_in_blacklist(action.command)
+                if in_bl:
+                    blocked.append((action.display_name, bl_reason))
+                    continue
+
+                # 2) 화이트리스트 확인
+                exe = get_exe_name(action.command)
+                if exe in ALLOWED_EXECUTABLES or is_in_dynamic_whitelist(exe):
+                    safe_actions.append(action)
+                else:
+                    unknown.append(action)
+
+            elif isinstance(action, InstallAction):
+                ok, reason = self._validate_install(action)
+                (safe_actions if ok else blocked).append(
+                    action if ok else (action.display_name, reason)
+                )
+
+            elif isinstance(action, ContainerSetupAction):
+                ok, reason = self._validate_container(action)
+                (safe_actions if ok else blocked).append(
+                    action if ok else (action.display_name, reason)
+                )
+
+            elif isinstance(action, SetEnvAction):
+                ok, reason = self._validate_set_env(action)
+                (safe_actions if ok else blocked).append(
+                    action if ok else (action.display_name, reason)
+                )
+
+        if unknown:
+            if self.llm:
+                # LLM 안전성 검사 — 백그라운드에서 실행
+                self._set_input_enabled(False)
+                self._append_message(
+                    "시스템",
+                    f"🔍 화이트리스트에 없는 명령어 {len(unknown)}개의 안전성을 검사 중..."
+                )
+
+                def _safety_worker():
+                    from core.llm_safety import check_command_safety
+                    results = [
+                        (act, check_command_safety(act.command, self.llm))
+                        for act in unknown
+                    ]
+                    self.after(0, self._on_safety_results, safe_actions, blocked, results)
+
+                threading.Thread(target=_safety_worker, daemon=True).start()
+            else:
+                # LLM 미연결 시 unknown은 모두 차단
+                for action in unknown:
+                    blocked.append((action.display_name, "화이트리스트에 없는 명령어 (LLM 미연결)"))
+                self._finalize_propose(safe_actions, blocked)
+        else:
+            self._finalize_propose(safe_actions, blocked)
+
+    def _on_safety_results(self, safe_actions: List[Action], blocked: list, results: list):
+        """LLM 안전성 검사 결과를 처리합니다 (메인 스레드에서 실행)."""
+        from core.llm_safety import SafetyLevel
+
+        auto_caution = os.environ.get("LLM_SAFETY_AUTO_CAUTION", "0") == "1"
+
+        for action, result in results:
+            if result.level == SafetyLevel.DANGEROUS:
+                blocked.append((action.display_name, f"위험 명령어 차단: {result.reason}"))
+
+            elif result.level == SafetyLevel.SAFE:
+                add_to_dynamic_whitelist(get_exe_name(action.command))
+                safe_actions.append(action)
+
+            else:  # CAUTION
+                if auto_caution:
+                    add_to_dynamic_whitelist(get_exe_name(action.command))
+                    safe_actions.append(action)
+                else:
+                    cmd_str = " ".join(action.command)
+                    dialog = _CautionConfirmDialog(self, cmd_str, result.reason)
+                    if dialog.get_result():
+                        add_to_dynamic_whitelist(get_exe_name(action.command))
+                        safe_actions.append(action)
+                    else:
+                        blocked.append((action.display_name, f"사용자 거부 — 주의 명령어: {result.reason}"))
+
+        self._finalize_propose(safe_actions, blocked)
+
+    def _finalize_propose(self, safe_actions: List[Action], blocked: list):
+        """안전성 검사가 끝난 후 제안 메시지를 표시하고 상태를 전환합니다."""
+        self._set_input_enabled(True)
 
         if blocked:
             blocked_msg = "\n".join(f"  ✗ {name}: {reason}" for name, reason in blocked)
@@ -577,36 +740,6 @@ class DevSetupApp(ctk.CTk):
             f"다음 작업을 진행할까요?\n\n{action_list}\n\n설치하려면 Y, 취소하려면 다른 키를 입력하세요."
         )
         self.app_state = STATE_AWAITING_CONFIRM
-
-    def _validate_actions(self, actions: List[Action]) -> tuple:
-        safe, blocked = [], []
-
-        for action in actions:
-            if isinstance(action, InstallAction):
-                ok, reason = self._validate_install(action)
-                (safe if ok else blocked).append(
-                    action if ok else (action.display_name, reason)
-                )
-
-            elif isinstance(action, (RunAction, LaunchAction)):
-                ok, reason = is_safe_command(action.command)
-                (safe if ok else blocked).append(
-                    action if ok else (action.display_name, reason)
-                )
-
-            elif isinstance(action, ContainerSetupAction):
-                ok, reason = self._validate_container(action)
-                (safe if ok else blocked).append(
-                    action if ok else (action.display_name, reason)
-                )
-
-            elif isinstance(action, SetEnvAction):
-                ok, reason = self._validate_set_env(action)
-                (safe if ok else blocked).append(
-                    action if ok else (action.display_name, reason)
-                )
-
-        return safe, blocked
 
     @staticmethod
     def _validate_install(action: InstallAction) -> tuple:

@@ -286,6 +286,26 @@ class LLMClient:
         self.history.append({"role": "assistant", "content": raw})
         return self._parse_response(raw)
 
+    def send_once(self, user_message: str, system_override: str) -> str:
+        """
+        히스토리를 건드리지 않는 단발성 LLM 호출입니다.
+        안전성 검사 등 내부 용도에만 사용합니다.
+        """
+        if self.provider == "gemini":
+            return self._call_gemini_once(system_override, user_message)
+
+        saved_history = self.history
+        self.history = [{"role": "user", "content": user_message}]
+        try:
+            if self.provider == "anthropic":
+                return self._call_anthropic(system_override)
+            elif self.provider == "openai":
+                return self._call_openai(system_override)
+            else:  # ollama
+                return self._call_ollama(system_override)
+        finally:
+            self.history = saved_history
+
     # ── B. 스트리밍 전송 ──────────────────────────────────────────────────────
 
     def send_stream(
@@ -517,6 +537,17 @@ class LLMClient:
             chat.history.append({"role": role, "parts": [msg["content"]]})
         last_msg = self.history[-1]["content"]
         response = chat.send_message(last_msg)
+        return response.text
+
+    def _call_gemini_once(self, system_override: str, user_message: str) -> str:
+        """시스템 프롬프트 오버라이드로 단발성 Gemini 호출을 수행합니다."""
+        import google.generativeai as genai
+        temp_client = genai.GenerativeModel(
+            model_name=self.model,
+            system_instruction=system_override,
+        )
+        chat = temp_client.start_chat(history=[])
+        response = chat.send_message(user_message)
         return response.text
 
     def _call_ollama(self, system: str) -> str:
