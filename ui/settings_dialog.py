@@ -5,8 +5,9 @@ C. LLM 프로바이더 / API 키 설정 다이얼로그
 """
 
 import os
+import threading
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import customtkinter as ctk
 
@@ -38,6 +39,14 @@ _DEFAULT_MODELS = {
     "ollama":    "mistral",
 }
 
+_MODEL_ENVVARS = {
+    "anthropic": "ANTHROPIC_MODEL",
+    "openai":    "OPENAI_MODEL",
+    "gemini":    "GEMINI_MODEL",
+    "groq":      "GROQ_MODEL",
+    "ollama":    "OLLAMA_MODEL",
+}
+
 
 # ── .env 파일 헬퍼 ─────────────────────────────────────────────────────────────
 
@@ -66,8 +75,9 @@ def _save_env(new_values: dict):
                 if key in new_values:
                     lines.append(f"{key}={new_values[key]}")
                     updated.add(key)
-                    continue
-            lines.append(line)
+                # new_values에 없는 키는 파일에서 제거 (삭제된 키 처리)
+            else:
+                lines.append(line)  # 주석·빈 줄은 유지
 
     # 기존 파일에 없던 새 키 추가
     for key, val in new_values.items():
@@ -98,6 +108,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self.on_apply = on_apply
         self._env = _load_env()
         self._show_key = False
+        self._fetch_thread: Optional[threading.Thread] = None
 
         self._build_ui()
         self._load_current_values()
@@ -143,15 +154,28 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         self._toggle_btn.grid(row=0, column=1)
 
-        # ── 모델 이름 ──
-        ctk.CTkLabel(self, text="모델 이름 (선택 — 기본값 사용 시 비워두세요)",
-                     font=("Malgun Gothic", 12), anchor="w",
-                     text_color="gray70").pack(fill="x", padx=24)
-        self._model_entry = ctk.CTkEntry(
-            self, font=("Malgun Gothic", 13),
-            placeholder_text="예: claude-haiku-4-5-20251001",
+        # ── 모델 선택 ──
+        model_header = ctk.CTkFrame(self, fg_color="transparent")
+        model_header.pack(fill="x", padx=24, pady=(6, 0))
+        model_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            model_header, text="모델",
+            font=("Malgun Gothic", 13), anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        self._refresh_btn = ctk.CTkButton(
+            model_header, text="↻ 목록 새로고침", width=110, height=22,
+            font=("Malgun Gothic", 11),
+            fg_color="gray30", hover_color="gray20",
+            command=self._on_refresh_models,
         )
-        self._model_entry.pack(fill="x", **pad)
+        self._refresh_btn.grid(row=0, column=1)
+
+        self._model_combo = ctk.CTkComboBox(
+            self, values=[], font=("Malgun Gothic", 13),
+            state="normal",
+        )
+        self._model_combo.pack(fill="x", padx=24, pady=(2, 6))
+        self._model_combo.set("")
 
         # ── Ollama URL (프로바이더가 ollama일 때만 표시) ──
         self._url_label = ctk.CTkLabel(
@@ -206,11 +230,7 @@ class SettingsDialog(ctk.CTkToplevel):
         provider = self._env.get("LLM_PROVIDER", "anthropic").lower()
         if provider in _PROVIDERS:
             self._provider_var.set(provider)
-        self._on_provider_change(provider)
-
-        model = self._env.get("LLM_MODEL", "")
-        if model:
-            self._model_entry.insert(0, model)
+        self._on_provider_change(provider)  # loads provider-specific model
 
         url = self._env.get("OLLAMA_BASE_URL", "")
         if url:
@@ -231,9 +251,17 @@ class SettingsDialog(ctk.CTkToplevel):
         else:
             self._key_entry.configure(state="disabled")
 
-        # 모델 placeholder를 선택한 프로바이더 기본값으로 업데이트
-        default_model = _DEFAULT_MODELS.get(provider, "")
-        self._model_entry.configure(placeholder_text=f"기본: {default_model}" if default_model else "")
+        # 모델: 프로바이더별 저장값 로드
+        model_envvar = _MODEL_ENVVARS.get(provider, "")
+        saved_model = self._env.get(model_envvar, "") if model_envvar else ""
+        self._model_combo.configure(values=[])
+        self._model_combo.set(saved_model)
+
+        # API 키가 있으면 모델 목록 비동기 로드
+        api_key = self._key_entry.get().strip()
+        if api_key or provider == "ollama":
+            base_url = self._url_entry.get().strip() if provider == "ollama" else ""
+            self._fetch_models_async(provider, api_key, base_url)
 
         if provider == "ollama":
             self._url_label.pack(fill="x", padx=24)
@@ -247,6 +275,56 @@ class SettingsDialog(ctk.CTkToplevel):
         self._key_entry.configure(show="" if self._show_key else "●")
         self._toggle_btn.configure(text="숨기기" if self._show_key else "보기")
 
+    def _on_refresh_models(self):
+        provider = self._provider_var.get()
+        envvar = _KEY_ENVVARS.get(provider, "")
+        api_key = self._key_entry.get().strip() if envvar else ""
+        base_url = self._url_entry.get().strip() if provider == "ollama" else ""
+        self._fetch_models_async(provider, api_key, base_url)
+
+    def _fetch_models_async(self, provider: str, api_key: str, base_url: str = ""):
+        """백그라운드에서 모델 목록을 가져와 ComboBox를 업데이트합니다."""
+        from core.model_list import fetch_models
+
+        current_value = self._model_combo.get()
+        self._model_combo.configure(values=[], state="disabled")
+        self._model_combo.set("불러오는 중...")
+        self._refresh_btn.configure(state="disabled")
+
+        def _worker():
+            models = fetch_models(provider, api_key, base_url)
+            if self.winfo_exists():
+                self.after(0, lambda: self._on_models_loaded(models, current_value))
+
+        self._fetch_thread = threading.Thread(target=_worker, daemon=True)
+        self._fetch_thread.start()
+
+    def _on_models_loaded(self, models: List[str], previous_value: str):
+        """모델 목록 로드 완료 시 UI를 업데이트합니다."""
+        if not self.winfo_exists():
+            return
+        self._refresh_btn.configure(state="normal")
+        self._model_combo.configure(state="normal")
+        if models:
+            self._model_combo.configure(values=models)
+            # 이전 값이 목록에 있으면 유지, 아니면 저장된 모델 또는 첫 번째 항목 선택
+            if previous_value and previous_value in models:
+                self._model_combo.set(previous_value)
+            else:
+                provider = self._provider_var.get()
+                default = _DEFAULT_MODELS.get(provider, "")
+                if default in models:
+                    self._model_combo.set(default)
+                elif previous_value and previous_value not in ("불러오는 중...", ""):
+                    self._model_combo.set(previous_value)
+                else:
+                    self._model_combo.set(models[0])
+        else:
+            self._model_combo.configure(values=[])
+            self._model_combo.set(
+                previous_value if previous_value not in ("불러오는 중...", "") else ""
+            )
+
     def _on_save(self):
         provider = self._provider_var.get()
         new_env = dict(self._env)
@@ -258,11 +336,18 @@ class SettingsDialog(ctk.CTkToplevel):
             if key:
                 new_env[envvar] = key
 
-        model = self._model_entry.get().strip()
+        model = self._model_combo.get().strip()
+        model_envvar = _MODEL_ENVVARS.get(provider, "")
         if model:
+            if model_envvar:
+                new_env[model_envvar] = model
+            # LLM_MODEL은 현재 활성 프로바이더의 모델로 설정 (core/llm.py 호환)
             new_env["LLM_MODEL"] = model
-        elif "LLM_MODEL" in new_env:
-            del new_env["LLM_MODEL"]
+        else:
+            if model_envvar and model_envvar in new_env:
+                del new_env[model_envvar]
+            if "LLM_MODEL" in new_env:
+                del new_env["LLM_MODEL"]
 
         if provider == "ollama":
             url = self._url_entry.get().strip()
@@ -272,6 +357,9 @@ class SettingsDialog(ctk.CTkToplevel):
         new_env["LLM_SAFETY_AUTO_CAUTION"] = "1" if self._auto_caution_var.get() else "0"
 
         _save_env(new_env)
+        # 삭제된 키를 os.environ에서도 제거
+        for key in set(self._env) - set(new_env):
+            os.environ.pop(key, None)
         self.destroy()
         if self.on_apply:
             self.on_apply()

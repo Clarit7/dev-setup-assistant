@@ -6,7 +6,7 @@ Pillow>=10.0.0             # 이미지 첨부/붙여넣기 기능 (스크린샷 
 anthropic>=0.34.0          # Anthropic Claude (추천)
 openai>=1.40.0             # OpenAI GPT
 groq>=0.11.0               # Groq (llama-3.3-70b-versatile 등, 무료 티어)
-google-generativeai>=0.8.0 # Google Gemini (무료 티어)
+google-genai>=1.0.0        # Google Gemini (무료 티어)
 requests>=2.31.0           # Ollama (로컬) 지원
 
 # .env 파일 자동 로드

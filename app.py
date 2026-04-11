@@ -42,6 +42,7 @@ except ImportError:
 # customtkinter 5.2.2 + Windows 11 버그 패치
 ctk.CTk._windows_set_titlebar_color = lambda self, color_mode: None
 
+from core.admin import is_admin, relaunch_as_admin
 from core.safety import (
     is_safe_command, is_in_blacklist, is_in_dynamic_whitelist,
     add_to_dynamic_whitelist, get_exe_name, ALLOWED_EXECUTABLES,
@@ -270,7 +271,7 @@ class DevSetupApp(_AppBase):
         super().__init__()
         if _DND_AVAILABLE:
             self.TkdndVersion = TkinterDnD._require(self)
-        self.title("개발환경 세팅 도우미")
+        self.title("개발환경 세팅 도우미 [관리자]")
         self.geometry("720x640")
         self.minsize(520, 440)
 
@@ -285,6 +286,8 @@ class DevSetupApp(_AppBase):
         self._stream_chars_emitted = 0
         # E/주제 가드: 스트리밍 시작 직전 텍스트 위치 (topic_valid=False 시 해당 범위 삭제)
         self._ai_stream_start: Optional[str] = None
+        # 스피너 텍스트가 실제로 textbox에 존재하는지 (삭제 이중 실행 방지)
+        self._spinner_present = False
 
         # E: 현재 첨부 이미지
         self._current_image = None   # ImageAttachment | None
@@ -669,7 +672,7 @@ class DevSetupApp(_AppBase):
         # Tk 텍스트 위젯은 끝에 암묵적 \n을 유지하므로:
         #   end-1c = 암묵적 \n,  end-2c = 스피너 줄의 실제 마지막 \n
         #   end-2c linestart = 스피너 줄의 첫 글자
-        pos = tb.index("end-2c linestart") if getattr(self, "_spinner_active", False) else "end"
+        pos = tb.index("end-2c linestart") if getattr(self, "_spinner_present", False) else "end"
         tb.insert(pos, f"[{sender}]\n{message}\n\n")
         self.chat_box.see("end")
         self.chat_box.configure(state="disabled")
@@ -678,7 +681,7 @@ class DevSetupApp(_AppBase):
         """발신자 없이 텍스트만 추가 (스트리밍 청크 / 설치 로그)"""
         self.chat_box.configure(state="normal")
         tb = self.chat_box._textbox
-        spinner_on = getattr(self, "_spinner_active", False)
+        spinner_on = getattr(self, "_spinner_present", False)
         ins = tb.index("end-2c linestart") if spinner_on else "end"
 
         if '\r' not in text:
@@ -736,6 +739,7 @@ class DevSetupApp(_AppBase):
     def _start_spinner(self, label: str = "처리 중"):
         """채팅창 맨 아래에 애니메이션 스피너 줄을 삽입합니다."""
         self._spinner_active = True
+        self._spinner_present = True
         self._spinner_frame_idx = 0
         self._spinner_label = label
         self.chat_box.configure(state="normal")
@@ -773,6 +777,9 @@ class DevSetupApp(_AppBase):
         if after_id:
             self.after_cancel(after_id)
             self._spinner_after_id = None
+        if not self._spinner_present:
+            return  # 이미 제거됨 — 두 번째 호출 시 스트리밍 내용 삭제 방지
+        self._spinner_present = False
         self.chat_box.configure(state="normal")
         tb = self.chat_box._textbox
         try:
@@ -966,7 +973,9 @@ class DevSetupApp(_AppBase):
         # ── 주제 가드 (방법 1+4) ────────────────────────────────────────────
         # LLM이 topic_valid=false를 반환하면, 이미 스트리밍된 내용을 삭제하고
         # 고정 메시지로 교체한다. LLM 응답 내용은 사용자에게 노출되지 않는다.
-        if not response.topic_valid:
+        if not response.topic_valid and self._stream_chars_emitted == 0:
+            # 청크가 전혀 없었던 경우에만 삭제 + 고정 메시지 표시
+            # (이미 스트리밍된 내용이 있으면 그냥 보여줌 — 오탐 방지)
             if self._ai_stream_start:
                 self.chat_box.configure(state="normal")
                 self.chat_box._textbox.delete(self._ai_stream_start, "end")
@@ -1000,10 +1009,13 @@ class DevSetupApp(_AppBase):
           blocked — 블랙리스트 매칭 또는 형식 오류
           unknown — 화이트리스트에 없으나 블랙리스트도 아닌 run/launch 액션
                     → LLM 안전성 검사가 필요합니다.
+          retry_items — 보안 규칙으로 차단된 항목 (사용자 거부 제외)
+                        → safe_actions가 없을 때 LLM에게 대안 재요청
         """
         safe_actions: List[Action] = []
         blocked: list = []
         unknown: List[Action] = []
+        retry_items: list = []  # (display_name, cmd_str, reason)
 
         for action in actions:
             if isinstance(action, (RunAction, LaunchAction)):
@@ -1011,6 +1023,7 @@ class DevSetupApp(_AppBase):
                 in_bl, bl_reason = is_in_blacklist(action.command)
                 if in_bl:
                     blocked.append((action.display_name, bl_reason))
+                    retry_items.append((action.display_name, " ".join(action.command), bl_reason))
                     continue
 
                 # 2) 화이트리스트 확인
@@ -1053,18 +1066,18 @@ class DevSetupApp(_AppBase):
                         (act, check_command_safety(act.command, self.llm))
                         for act in unknown
                     ]
-                    self.after(0, self._on_safety_results, safe_actions, blocked, results)
+                    self.after(0, self._on_safety_results, safe_actions, blocked, retry_items, results)
 
                 threading.Thread(target=_safety_worker, daemon=True).start()
             else:
                 # LLM 미연결 시 unknown은 모두 차단
                 for action in unknown:
                     blocked.append((action.display_name, "화이트리스트에 없는 명령어 (LLM 미연결)"))
-                self._finalize_propose(safe_actions, blocked)
+                self._finalize_propose(safe_actions, blocked, retry_items)
         else:
-            self._finalize_propose(safe_actions, blocked)
+            self._finalize_propose(safe_actions, blocked, retry_items)
 
-    def _on_safety_results(self, safe_actions: List[Action], blocked: list, results: list):
+    def _on_safety_results(self, safe_actions: List[Action], blocked: list, retry_items: list, results: list):
         """LLM 안전성 검사 결과를 처리합니다 (메인 스레드에서 실행)."""
         from core.llm_safety import SafetyLevel
 
@@ -1073,6 +1086,7 @@ class DevSetupApp(_AppBase):
         for action, result in results:
             if result.level == SafetyLevel.DANGEROUS:
                 blocked.append((action.display_name, f"위험 명령어 차단: {result.reason}"))
+                retry_items.append((action.display_name, " ".join(action.command), result.reason))
 
             elif result.level == SafetyLevel.SAFE:
                 add_to_dynamic_whitelist(get_exe_name(action.command))
@@ -1090,10 +1104,11 @@ class DevSetupApp(_AppBase):
                         safe_actions.append(action)
                     else:
                         blocked.append((action.display_name, f"사용자 거부 — 주의 명령어: {result.reason}"))
+                        # 사용자가 직접 거부한 경우는 자동 재시도 대상에서 제외
 
-        self._finalize_propose(safe_actions, blocked)
+        self._finalize_propose(safe_actions, blocked, retry_items)
 
-    def _finalize_propose(self, safe_actions: List[Action], blocked: list):
+    def _finalize_propose(self, safe_actions: List[Action], blocked: list, retry_items: list = None):
         """안전성 검사가 끝난 후 제안 메시지를 표시하고 상태를 전환합니다."""
         self._set_input_enabled(True)
 
@@ -1102,7 +1117,10 @@ class DevSetupApp(_AppBase):
             self._append_message("시스템", f"⚠️  보안 검사에서 차단됨:\n{blocked_msg}")
 
         if not safe_actions:
-            self._append_message("AI", "실행 가능한 액션이 없습니다. 다른 방법을 말씀해주세요.")
+            if retry_items and self.llm:
+                self._request_llm_alternative(retry_items)
+            else:
+                self._append_message("AI", "실행 가능한 액션이 없습니다. 다른 방법을 말씀해주세요.")
             return
 
         self.pending_actions = safe_actions
@@ -1112,6 +1130,21 @@ class DevSetupApp(_AppBase):
             f"다음 작업을 진행할까요?\n\n{action_list}\n\n설치하려면 Y, 취소하려면 다른 키를 입력하세요."
         )
         self.app_state = STATE_AWAITING_CONFIRM
+
+    def _request_llm_alternative(self, retry_items: list):
+        """보안 규칙으로 차단된 명령어를 LLM에 알리고 대안을 자동으로 요청합니다."""
+        lines = "\n".join(
+            f"  - {name} (`{cmd}`): {reason}"
+            for name, cmd, reason in retry_items
+        )
+        retry_msg = (
+            "[앱 시스템] 제안한 명령어가 보안 규칙으로 차단되어 실행할 수 없습니다:\n"
+            f"{lines}\n\n"
+            "위 방법 대신, 동일한 목표를 달성할 수 있는 다른 방법을 제안해 주세요. "
+            "가능하면 winget, 공식 패키지 관리자, 또는 허용된 CLI 도구를 사용해 주세요."
+        )
+        self._append_message("시스템", "🔄 LLM에게 대안을 요청합니다...")
+        self._send_to_llm_async(retry_msg)
 
     @staticmethod
     def _validate_install(action: InstallAction) -> tuple:
@@ -1165,7 +1198,11 @@ class DevSetupApp(_AppBase):
         self._set_input_enabled(False)
         self._set_installing_mode(True)
         spinner_label = self._get_operation_label(self.pending_actions)
-        self._append_message("AI", f"{spinner_label.replace(' 진행 중', '')}을 시작합니다. 잠시 기다려주세요...\n")
+        op_label = spinner_label.replace(' 진행 중', '')
+        # 한국어 조사: 마지막 글자에 받침 없으면 '를', 있으면 '을'
+        last = op_label[-1] if op_label else ""
+        particle = "을" if last and (ord(last) - 0xAC00) % 28 != 0 else "를"
+        self._append_message("AI", f"{op_label}{particle} 시작합니다. 잠시 기다려주세요...\n")
         self._start_spinner(spinner_label)
         threading.Thread(target=self._run_installation, daemon=True).start()
 
@@ -1180,6 +1217,21 @@ class DevSetupApp(_AppBase):
 
         success = True
         recorded_packages: List[str] = []
+        failure_logs: List[str] = []   # 실패한 액션의 (이름, 출력) 요약
+
+        def _make_collectors(display_name: str):
+            """액션별 출력 수집기를 반환합니다."""
+            lines: List[str] = []
+            def on_out(line: str):
+                lines.append(line.rstrip())
+                self.after(0, self._append_text, line)
+            def on_err(msg: str):
+                lines.append(f"[오류] {msg}")
+                self.after(0, self._append_text, f"[오류] {msg}")
+            def flush_on_fail():
+                tail = "\n".join(lines[-30:])  # 마지막 30줄만
+                failure_logs.append(f"[{display_name}]\n{tail}")
+            return on_out, on_err, flush_on_fail
 
         # 1) 패키지 설치 (winget)
         for action in install_actions:
@@ -1191,32 +1243,26 @@ class DevSetupApp(_AppBase):
                 self.after(0, self._append_text, "✓ 이미 설치되어 있습니다.\n\n")
                 continue
 
+            on_out, on_err, flush_fail = _make_collectors(action.display_name)
             cmd = self.installer.build_install_command(action.package_id)
-            ok = run_command(
-                cmd,
-                on_output=lambda line: self.after(0, self._append_text, line),
-                on_error=lambda msg: self.after(0, self._append_text, f"[오류] {msg}"),
-                stop_event=stop,
-            )
+            ok = run_command(cmd, on_output=on_out, on_error=on_err, stop_event=stop)
             self.after(0, self._append_text, "\n")
             recorded_packages.append(action.display_name)
             if not ok:
                 success = False
+                flush_fail()
 
         # 2) 추가 명령어 실행 (npm install 등)
         for action in run_actions:
             if stop.is_set():
                 break
             self.after(0, self._append_text, f"━━━ {action.display_name} ━━━\n")
-            ok = run_command(
-                action.command,
-                on_output=lambda line: self.after(0, self._append_text, line),
-                on_error=lambda msg: self.after(0, self._append_text, f"[오류] {msg}"),
-                stop_event=stop,
-            )
+            on_out, on_err, flush_fail = _make_collectors(action.display_name)
+            ok = run_command(action.command, on_output=on_out, on_error=on_err, stop_event=stop)
             self.after(0, self._append_text, "\n")
             if not ok:
                 success = False
+                flush_fail()
 
         # 3) API 키 등 환경변수 설정 (사용자 입력 필요 → 메인 스레드 다이얼로그)
         for action in set_env_actions:
@@ -1236,7 +1282,7 @@ class DevSetupApp(_AppBase):
         cancelled = stop.is_set()
         self.after(
             0, self._on_installation_done, success, launch_actions, recorded_packages,
-            cancelled
+            cancelled, failure_logs
         )
 
     def _prompt_env_key(self, action: SetEnvAction, done: threading.Event):
@@ -1363,7 +1409,8 @@ class DevSetupApp(_AppBase):
 
     def _on_installation_done(
         self, success: bool, launch_actions: List[LaunchAction],
-        recorded_packages: List[str], cancelled: bool = False
+        recorded_packages: List[str], cancelled: bool = False,
+        failure_logs: List[str] = None,
     ):
         self.pending_actions.clear()
         self._stop_spinner()
@@ -1386,13 +1433,26 @@ class DevSetupApp(_AppBase):
         result_msg = "설치가 완료됐습니다! ✓" if success else (
             "일부 설치에 실패했습니다. 관리자 권한으로 재시도하거나 패키지 관리자 버전을 확인해주세요."
         )
-        context_msg = (
-            f"설치 {'성공' if success else '실패'}.\n"
-            f"실행할 앱 목록: {[a.display_name for a in launch_actions]}"
-            if launch_actions else
-            f"설치 {'성공' if success else '실패'}. 다음 단계를 안내해주세요."
-        )
         self._append_message("시스템", result_msg)
+
+        if success:
+            context_msg = (
+                f"설치 성공.\n실행할 앱 목록: {[a.display_name for a in launch_actions]}"
+                if launch_actions else
+                "설치가 모두 성공했습니다. 다음 단계를 안내해주세요."
+            )
+        else:
+            log_detail = (
+                "\n\n다음은 실패한 항목의 출력 로그입니다:\n"
+                + "\n---\n".join(failure_logs)
+                if failure_logs else ""
+            )
+            context_msg = (
+                f"[앱 시스템] 설치 중 일부 항목이 실패했습니다.{log_detail}\n\n"
+                "위 오류 로그를 바탕으로 원인을 분석하고, "
+                "해결 방법(재시도 방법, 대안 명령어, 권한 문제 해소 방법 등)을 구체적으로 안내해 주세요. "
+                "사용자에게 오류 원인을 직접 묻지 마세요."
+            )
         self._send_to_llm_async(context_msg)
 
         for action in launch_actions:
@@ -1413,5 +1473,9 @@ class DevSetupApp(_AppBase):
 
 # ── 진입점 ───────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # 관리자 권한이 없으면 UAC 프롬프트를 띄우고 현재 프로세스 종료
+    if not is_admin():
+        relaunch_as_admin()
+        raise SystemExit(0)
     app = DevSetupApp()
     app.mainloop()

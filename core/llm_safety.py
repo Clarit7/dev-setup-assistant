@@ -32,24 +32,44 @@ RESPONSE FORMAT: Return ONLY valid JSON — no markdown fences, no extra text.
 EVALUATION CRITERIA:
 
 "safe":
-  Developer-grade tools with well-known, scoped behavior.
-  Examples: compilers (gcc, rustc), build tools (cmake, make, gradle), version managers,
-  common package managers (npm, pip, cargo), linters, formatters, code generators,
-  database CLI clients (psql, mysql, sqlite3), standard dev utilities.
+  Developer tools with well-known, clearly scoped behavior.
+  - Compilers / build tools: gcc, clang, cmake, make, gradle, mvn, cargo build, go build
+  - Package managers operating on a project: npm install, pip install, cargo add
+  - Version managers: nvm use, volta install, pyenv install, rbenv install
+  - Code quality tools: eslint, prettier, black, mypy, flake8, ruff
+  - Database clients (read/write, not destructive admin): psql, mysql, sqlite3, mongosh
+  - Standard dev CLI operations: git clone/pull/push, code --install-extension,
+    docker build/run/pull, kubectl get/apply, helm install
+  - Downloading a file with curl/wget to a local path (NOT piping to a shell)
+  - Running a LOCALLY DOWNLOADED installer (.exe, .msi) with silent/quiet flags
+    — this is standard practice for dev tools without a package manager entry
 
 "caution":
-  Commands that could have significant side effects beyond the current project directory,
-  modify system-wide settings, install packages globally, run remote scripts,
-  require elevated privileges, or have large disk/network impact.
-  Examples: npm install -g <unknown>, pip install --user <unknown>,
-  system configuration tools, network scanning utilities, script runners fetching from URLs.
+  Commands with wider system impact that a developer might reasonably intend but
+  should confirm. When in doubt between "safe" and "caution", choose "caution".
+  - Global package installs: npm install -g, pip install --user, gem install --user
+  - System-wide configuration changes (PATH, env vars via registry, etc.)
+  - Running local shell scripts (.sh, .bat, .ps1) whose content is unknown
+  - powershell -Command or pwsh -Command running an installer or system change
+  - Large-scale operations: winget upgrade --all, docker system prune -a
+  - Network-intensive operations: pulling large images, cloning huge repos
 
 "dangerous":
-  Commands that could damage the system, access sensitive areas, exfiltrate data,
-  modify security settings, encrypt files, create backdoors, or are clearly malicious.
-  Examples: rm -rf /, format C:, reg delete HKLM, taskkill /f lsass,
-  powershell -EncodedCommand, curl | bash (remote execution),
-  access to System32/SysWOW64, shutdown/restart commands, any obfuscated command.
+  ONLY commands that could cause IRREVERSIBLE DAMAGE or security compromise.
+  Be SPECIFIC — do not classify general installer or dev tool usage as dangerous.
+  - Disk/filesystem destruction: rm -rf /, format C:, del /f /s /q C:\\
+  - Piping remote content directly into a shell: curl ... | bash, iwr ... | iex
+  - Obfuscated execution: powershell -EncodedCommand, -WindowStyle Hidden -EncodedCommand
+  - Security setting changes: reg delete HKLM\\..., bcdedit, netsh advfirewall set allprofiles off
+  - Killing critical system processes: taskkill /f /im lsass.exe, /im svchost.exe
+  - Accessing sensitive system paths: System32, SysWOW64, %WINDIR%
+  - Shutdown/restart: shutdown /s, shutdown /r
+  - Clearly malicious patterns: data exfiltration, credential harvesting, backdoors
+
+DEFAULT RULE: If a command looks like a standard developer environment setup step
+(installing a tool, building code, configuring a dev environment), lean toward
+"safe" or "caution" — NOT "dangerous". Reserve "dangerous" for genuinely destructive
+or malicious commands.
 
 Always write the "reason" field in Korean.
 """

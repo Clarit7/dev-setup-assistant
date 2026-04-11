@@ -19,6 +19,7 @@ class WingetInstaller(BaseInstaller):
             "--id", package_id, "-e",
             "--accept-package-agreements",
             "--accept-source-agreements",
+            "--silent",
         ]
 
     def is_available(self) -> bool:

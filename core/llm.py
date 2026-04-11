@@ -73,15 +73,18 @@ When the user expresses interest in developing something (e.g. "I want to build 
 "I'm thinking of starting a React project", "which language should I use for X"),
 treat it as ON-TOPIC and proactively suggest the relevant environment setup.
 
-If the user asks about ANYTHING clearly unrelated to software development or tech
-(writing essays, translation, general knowledge, math homework, entertainment,
-personal advice, cooking, etc.), you MUST:
-1. Set topic_valid=false
-2. Write a single polite refusal sentence in message — do NOT answer the question
-3. Keep ready_to_install=false and actions=[]
+ALWAYS treat as ON-TOPIC (topic_valid=true):
+- Greetings, chitchat, short messages ("안녕", "hello", "hi", "thanks", etc.)
+- Questions about what this assistant can do
+- Any message in Korean (the user base is Korean developers)
+- Ambiguous messages that could possibly relate to development
 
-When in doubt, lean toward topic_valid=true and steer the conversation toward
-what dev environment the user might need.
+ONLY set topic_valid=false for requests that are CLEARLY and UNAMBIGUOUSLY
+unrelated to software/tech — e.g. writing love letters, cooking recipes,
+medical advice, sports scores. If there is ANY doubt, use topic_valid=true.
+
+When topic_valid=false: write a single polite refusal in message, keep
+ready_to_install=false and actions=[].
 
 When topic_valid=true (normal case), omit it or set it to true.
 
@@ -90,6 +93,16 @@ When topic_valid=true (normal case), omit it or set it to true.
 ### Package install (winget)
 {"type": "install", "package_id": "OpenJS.NodeJS",
  "display_name": "Node.js", "check_command": "node"}
+
+ALWAYS use "install" type (winget) for well-known apps — NEVER generate curl/powershell
+download scripts. Key winget IDs:
+  Docker Desktop  → "Docker.DockerDesktop"   check_command: "docker"
+  Git             → "Git.Git"                check_command: "git"
+  VS Code         → "Microsoft.VisualStudioCode" check_command: "code"
+  Python          → "Python.Python.3.12"     check_command: "python"
+  Node.js         → "OpenJS.NodeJS"          check_command: "node"
+  Rust            → "Rustlang.Rustup"        check_command: "rustup"
+  Go              → "GoLang.Go"              check_command: "go"
 
 ### Run command
 {"type": "run", "command": ["npm", "install", "-g", "typescript"],
@@ -225,10 +238,8 @@ class LLMClient:
             )
 
     def _init_anthropic(self):
-        try:
-            import anthropic  # noqa: F401
-        except ImportError:
-            raise ImportError("pip install anthropic  을 실행하세요.")
+        from core.auto_install import ensure
+        ensure("anthropic")
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise ValueError(
@@ -237,13 +248,11 @@ class LLMClient:
             )
         import anthropic as _ant
         self._client = _ant.Anthropic(api_key=api_key)
-        self.model = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+        self.model = os.getenv("ANTHROPIC_MODEL") or os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
 
     def _init_openai(self):
-        try:
-            import openai  # noqa: F401
-        except ImportError:
-            raise ImportError("pip install openai  을 실행하세요.")
+        from core.auto_install import ensure
+        ensure("openai")
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key:
             raise ValueError(
@@ -252,28 +261,24 @@ class LLMClient:
             )
         import openai as _oai
         self._client = _oai.OpenAI(api_key=api_key)
-        self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
 
     def _init_gemini(self):
-        try:
-            import google.generativeai  # noqa: F401
-        except ImportError:
-            raise ImportError("pip install google-generativeai  을 실행하세요.")
+        from core.auto_install import ensure
+        ensure("google-genai", "google.genai")
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
             raise ValueError(
                 "GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.\n"
                 ".env 파일에 GEMINI_API_KEY=AIza... 를 추가하세요."
             )
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        self.model = os.getenv("LLM_MODEL", "gemini-2.5-flash-preview-04-17")
-        self._client = genai.GenerativeModel(
-            model_name=self.model,
-            system_instruction=_BASE_SYSTEM_PROMPT,
-        )
+        from google import genai as _genai
+        self._client = _genai.Client(api_key=api_key)
+        self.model = os.getenv("GEMINI_MODEL") or os.getenv("LLM_MODEL", "gemini-2.5-flash-preview-04-17")
 
     def _init_groq(self):
+        from core.auto_install import ensure
+        ensure("groq")
         api_key = os.getenv("GROQ_API_KEY", "")
         if not api_key:
             raise ValueError(
@@ -281,31 +286,15 @@ class LLMClient:
                 ".env 파일에 GROQ_API_KEY=gsk_... 를 추가하세요.\n"
                 "API 키 발급: https://console.groq.com/keys"
             )
-        # groq 패키지 우선, 없으면 openai SDK + Groq base_url로 폴백
-        try:
-            import groq as _groq
-            self._client = _groq.Groq(api_key=api_key)
-        except ImportError:
-            try:
-                import openai as _oai
-                self._client = _oai.OpenAI(
-                    api_key=api_key,
-                    base_url="https://api.groq.com/openai/v1",
-                )
-            except ImportError:
-                raise ImportError(
-                    "pip install groq  을 실행하세요.\n"
-                    "(또는 pip install openai 으로도 동작합니다)"
-                )
-        self.model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+        import groq as _groq
+        self._client = _groq.Groq(api_key=api_key)
+        self.model = os.getenv("GROQ_MODEL") or os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
     def _init_ollama(self):
-        try:
-            import requests  # noqa: F401
-        except ImportError:
-            raise ImportError("pip install requests  을 실행하세요.")
+        from core.auto_install import ensure
+        ensure("requests")
         self._base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model = os.getenv("LLM_MODEL", "mistral")
+        self.model = os.getenv("OLLAMA_MODEL") or os.getenv("LLM_MODEL", "mistral")
         self._client = None
 
     # ── 일반 전송 ────────────────────────────────────────────────────────────
@@ -508,22 +497,28 @@ class LLMClient:
                 yield delta
 
     def _iter_gemini_stream(self, image=None) -> Iterator[str]:
-        chat = self._client.start_chat(history=[])
+        from google.genai import types as _gtypes
+        history = []
         for msg in self.history[:-1]:
             role = "user" if msg["role"] == "user" else "model"
-            chat.history.append({"role": role, "parts": [msg["content"]]})
+            history.append(_gtypes.Content(role=role, parts=[_gtypes.Part(text=msg["content"])]))
         last_msg = self.history[-1]["content"]
         if image:
             import base64 as _b64
-            image_part = {
-                "mime_type": image.media_type,
-                "data": _b64.b64decode(image.base64_data),
-            }
-            send_parts = [last_msg, image_part]
+            last_parts = [
+                _gtypes.Part(text=last_msg),
+                _gtypes.Part(inline_data=_gtypes.Blob(
+                    mime_type=image.media_type,
+                    data=_b64.b64decode(image.base64_data),
+                )),
+            ]
         else:
-            send_parts = last_msg
-        response = chat.send_message(send_parts, stream=True)
-        for chunk in response:
+            last_parts = [_gtypes.Part(text=last_msg)]
+        history.append(_gtypes.Content(role="user", parts=last_parts))
+        config = _gtypes.GenerateContentConfig(system_instruction=_BASE_SYSTEM_PROMPT)
+        for chunk in self._client.models.generate_content_stream(
+            model=self.model, contents=history, config=config
+        ):
             if chunk.text:
                 yield chunk.text
 
@@ -576,23 +571,27 @@ class LLMClient:
         return response.choices[0].message.content
 
     def _call_gemini(self) -> str:
-        chat = self._client.start_chat(history=[])
+        from google.genai import types as _gtypes
+        history = []
         for msg in self.history[:-1]:
             role = "user" if msg["role"] == "user" else "model"
-            chat.history.append({"role": role, "parts": [msg["content"]]})
+            history.append(_gtypes.Content(role=role, parts=[_gtypes.Part(text=msg["content"])]))
         last_msg = self.history[-1]["content"]
-        response = chat.send_message(last_msg)
+        history.append(_gtypes.Content(role="user", parts=[_gtypes.Part(text=last_msg)]))
+        config = _gtypes.GenerateContentConfig(system_instruction=_BASE_SYSTEM_PROMPT)
+        response = self._client.models.generate_content(
+            model=self.model, contents=history, config=config
+        )
         return response.text
 
     def _call_gemini_once(self, system_override: str, user_message: str) -> str:
         """시스템 프롬프트 오버라이드로 단발성 Gemini 호출을 수행합니다."""
-        import google.generativeai as genai
-        temp_client = genai.GenerativeModel(
-            model_name=self.model,
-            system_instruction=system_override,
+        from google.genai import types as _gtypes
+        config = _gtypes.GenerateContentConfig(system_instruction=system_override)
+        contents = [_gtypes.Content(role="user", parts=[_gtypes.Part(text=user_message)])]
+        response = self._client.models.generate_content(
+            model=self.model, contents=contents, config=config
         )
-        chat = temp_client.start_chat(history=[])
-        response = chat.send_message(user_message)
         return response.text
 
     def _call_ollama(self, system: str) -> str:
@@ -620,7 +619,7 @@ class LLMClient:
         return LLMResponse(
             message=data.get("message", raw),
             ready_to_install=bool(data.get("ready_to_install", False)),
-            topic_valid=bool(data.get("topic_valid", True)),
+            topic_valid=data.get("topic_valid") is not False,
             actions=actions,
             raw=raw,
         )

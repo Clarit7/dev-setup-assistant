@@ -13,17 +13,50 @@ _DYNAMIC_WHITELIST: set = set()
 # ── 허용된 실행 파일 목록 (이 외의 실행 파일은 모두 차단) ──────────────────
 ALLOWED_EXECUTABLES = {
     # 패키지 관리자
-    "winget", "choco", "brew",
+    "winget", "choco", "brew", "scoop",
     "apt", "apt-get", "snap", "dnf", "yum", "pacman", "zypper",
+    # 다운로드 도구 (curl | bash 패턴은 블랙리스트가 별도 차단)
+    "curl", "wget",
     # JS 생태계
     "npm", "npx", "node", "yarn", "pnpm", "deno", "bun",
+    # Node.js 버전 관리자
+    "nvm", "volta", "fnm",
     # Python 생태계
     "pip", "pip3", "python", "python3",
+    "pyenv",                             # Python 버전 관리자
+    "uv",                                # 고속 Python 패키지 관리자
+    # Ruby 생태계
+    "ruby", "gem", "bundle", "rbenv", "rvm",
+    # PHP
+    "php", "composer",
     # 기타 런타임 / 도구
     "git", "code", "cargo", "rustup", "go", "dotnet",
     "mvn", "gradle", "java", "javac",
+    # Kotlin
+    "kotlin", "kotlinc",
+    # Flutter / Dart
+    "flutter", "dart",
+    # Swift
+    "swift", "swiftc",
+    # Elixir / Erlang
+    "elixir", "mix", "erlang", "rebar3",
+    # Haskell
+    "stack", "cabal", "ghc",
+    # Lua
+    "lua", "luarocks",
+    # Julia
+    "julia",
     # 컨테이너
     "docker", "docker-compose", "podman", "wsl",
+    # 쿠버네티스 / 클라우드 인프라
+    "kubectl", "helm", "minikube", "k9s", "kind", "k3s",
+    "terraform", "tofu",
+    # 클라우드 CLI
+    "az",                                # Azure CLI
+    "aws",                               # AWS CLI
+    "gcloud", "gsutil", "bq",           # Google Cloud SDK
+    # 배포 CLI
+    "vercel", "netlify",
     # AI 코드 에이전트
     "claude",   # Claude Code (Anthropic)
     "codex",    # OpenAI Codex CLI
