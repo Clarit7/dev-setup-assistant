@@ -4,14 +4,16 @@ LLM API 클라이언트
 지원 프로바이더:
     anthropic  — Claude (Haiku 기본)
     openai     — GPT (gpt-4o-mini 기본)
-    gemini     — Google Gemini (gemini-1.5-flash 기본, 무료 티어 있음)
+    gemini     — Google Gemini (gemini-2.5-flash 기본, 무료 티어 있음)
+    groq       — Groq (llama-3.3-70b-versatile 기본, 무료 티어 있음)
     ollama     — 로컬 모델 (API 키 불필요)
 
 환경 변수 (.env 또는 시스템):
-    LLM_PROVIDER        : anthropic | openai | gemini | ollama  (기본: anthropic)
+    LLM_PROVIDER        : anthropic | openai | gemini | groq | ollama  (기본: anthropic)
     ANTHROPIC_API_KEY   : Anthropic API 키
     OPENAI_API_KEY      : OpenAI API 키
     GEMINI_API_KEY      : Google Gemini API 키
+    GROQ_API_KEY        : Groq API 키 (console.groq.com에서 발급)
     OLLAMA_BASE_URL     : Ollama 서버 URL (기본: http://localhost:11434)
     LLM_MODEL           : 모델 이름 오버라이드 (미설정 시 프로바이더 기본값 사용)
 """
@@ -212,12 +214,14 @@ class LLMClient:
             self._init_openai()
         elif self.provider == "gemini":
             self._init_gemini()
+        elif self.provider == "groq":
+            self._init_groq()
         elif self.provider == "ollama":
             self._init_ollama()
         else:
             raise ValueError(
                 f"지원하지 않는 LLM 프로바이더: '{self.provider}'\n"
-                "사용 가능: anthropic, openai, gemini, ollama"
+                "사용 가능: anthropic, openai, gemini, groq, ollama"
             )
 
     def _init_anthropic(self):
@@ -269,6 +273,25 @@ class LLMClient:
             system_instruction=_BASE_SYSTEM_PROMPT,
         )
 
+    def _init_groq(self):
+        try:
+            import openai  # noqa: F401
+        except ImportError:
+            raise ImportError("pip install openai  을 실행하세요.")
+        api_key = os.getenv("GROQ_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "GROQ_API_KEY 환경 변수가 설정되지 않았습니다.\n"
+                ".env 파일에 GROQ_API_KEY=gsk_... 를 추가하세요.\n"
+                "API 키 발급: https://console.groq.com/keys"
+            )
+        import openai as _oai
+        self._client = _oai.OpenAI(
+            api_key=api_key,
+            base_url="https://api.groq.com/openai/v1",
+        )
+        self.model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+
     def _init_ollama(self):
         try:
             import requests  # noqa: F401
@@ -287,7 +310,7 @@ class LLMClient:
 
         if self.provider == "anthropic":
             raw = self._call_anthropic(system)
-        elif self.provider == "openai":
+        elif self.provider in ("openai", "groq"):
             raw = self._call_openai(system)
         elif self.provider == "gemini":
             raw = self._call_gemini()
@@ -310,7 +333,7 @@ class LLMClient:
         try:
             if self.provider == "anthropic":
                 return self._call_anthropic(system_override)
-            elif self.provider == "openai":
+            elif self.provider in ("openai", "groq"):
                 return self._call_openai(system_override)
             else:  # ollama
                 return self._call_ollama(system_override)
@@ -411,7 +434,7 @@ class LLMClient:
         img = self._pending_image
         if self.provider == "anthropic":
             yield from self._iter_anthropic_stream(system, img)
-        elif self.provider == "openai":
+        elif self.provider in ("openai", "groq"):
             yield from self._iter_openai_stream(system, img)
         elif self.provider == "gemini":
             yield from self._iter_gemini_stream(img)
@@ -617,6 +640,7 @@ class LLMClient:
             "anthropic": f"Claude ({self.model})",
             "openai":    f"OpenAI ({self.model})",
             "gemini":    f"Gemini ({self.model})",
+            "groq":      f"Groq ({self.model})",
             "ollama":    f"Ollama/{self.model} (로컬)",
         }
         return labels.get(self.provider, self.provider)

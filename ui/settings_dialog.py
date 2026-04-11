@@ -12,12 +12,13 @@ import customtkinter as ctk
 
 _ENV_FILE = Path(__file__).parent.parent / ".env"
 
-_PROVIDERS = ["anthropic", "openai", "gemini", "ollama"]
+_PROVIDERS = ["anthropic", "openai", "gemini", "groq", "ollama"]
 
 _KEY_LABELS = {
     "anthropic": "Anthropic API 키  (sk-ant-...)",
     "openai":    "OpenAI API 키  (sk-...)",
     "gemini":    "Google Gemini API 키  (AIza...)",
+    "groq":      "Groq API 키  (gsk_...)",
     "ollama":    "(API 키 불필요 — 로컬 서버)",
 }
 
@@ -25,13 +26,15 @@ _KEY_ENVVARS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai":    "OPENAI_API_KEY",
     "gemini":    "GEMINI_API_KEY",
+    "groq":      "GROQ_API_KEY",
     "ollama":    "",
 }
 
 _DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
     "openai":    "gpt-4o-mini",
-    "gemini":    "gemini-1.5-flash",
+    "gemini":    "gemini-2.5-flash-preview-04-17",
+    "groq":      "llama-3.3-70b-versatile",
     "ollama":    "mistral",
 }
 
@@ -227,6 +230,10 @@ class SettingsDialog(ctk.CTkToplevel):
             self._key_entry.configure(state="normal")
         else:
             self._key_entry.configure(state="disabled")
+
+        # 모델 placeholder를 선택한 프로바이더 기본값으로 업데이트
+        default_model = _DEFAULT_MODELS.get(provider, "")
+        self._model_entry.configure(placeholder_text=f"기본: {default_model}" if default_model else "")
 
         if provider == "ollama":
             self._url_label.pack(fill="x", padx=24)
