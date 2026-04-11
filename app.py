@@ -29,8 +29,15 @@ import threading
 from pathlib import Path
 from typing import List, Optional
 
+import tkinter as tk
 import customtkinter as ctk
 from tkinter import filedialog
+
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    _DND_AVAILABLE = True
+except ImportError:
+    _DND_AVAILABLE = False
 
 # customtkinter 5.2.2 + Windows 11 버그 패치
 ctk.CTk._windows_set_titlebar_color = lambda self, color_mode: None
@@ -65,6 +72,10 @@ ctk.set_default_color_theme("blue")
 STATE_CHATTING         = "chatting"
 STATE_AWAITING_CONFIRM = "awaiting_confirm"
 STATE_INSTALLING       = "installing"
+
+# ── 스피너 애니메이션 프레임 ───────────────────────────────────────────────────
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+_SPINNER_INTERVAL_MS = 120
 
 # ── 인스톨러 초기화 ───────────────────────────────────────────────────────────
 _INSTALLERS = {
@@ -248,9 +259,17 @@ class _CautionConfirmDialog(ctk.CTkToplevel):
 
 
 # ── GUI ──────────────────────────────────────────────────────────────────────
-class DevSetupApp(ctk.CTk):
+_AppBase = (
+    type("_AppBase", (ctk.CTk, TkinterDnD.DnDWrapper), {})
+    if _DND_AVAILABLE else ctk.CTk
+)
+
+
+class DevSetupApp(_AppBase):
     def __init__(self):
         super().__init__()
+        if _DND_AVAILABLE:
+            self.TkdndVersion = TkinterDnD._require(self)
         self.title("개발환경 세팅 도우미")
         self.geometry("720x640")
         self.minsize(520, 440)
@@ -273,30 +292,72 @@ class DevSetupApp(ctk.CTk):
         self.llm: LLMClient | None = None
 
         self._build_ui()
+        self._init_dnd()
         self._init_llm()
 
         # A: 앱 시작 직후 환경 감지 (백그라운드)
         threading.Thread(target=self._detect_environment, daemon=True).start()
+
+    def _init_dnd(self):
+        """드래그앤드롭 초기화 (tkinterdnd2 설치 시)."""
+        if not _DND_AVAILABLE:
+            return
+        try:
+            widgets = [self, self.input_container]
+            # ctk 래퍼의 내부 tkinter 위젯도 등록 (실제 이벤트 수신 대상)
+            for ctk_w, inner_attr in (
+                (self.chat_box,    "_textbox"),
+                (self.input_field, "_textbox"),
+            ):
+                widgets.append(ctk_w)
+                inner = getattr(ctk_w, inner_attr, None)
+                if inner:
+                    widgets.append(inner)
+            for w in widgets:
+                try:
+                    w.drop_target_register(DND_FILES)
+                    w.dnd_bind("<<Drop>>", self._on_dnd_drop)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[DnD] 초기화 실패: {e}")
+
+    def _on_dnd_drop(self, event):
+        """파일 드롭 이벤트 — 이미지 파일이면 첨부합니다."""
+        raw = event.data.strip()
+        paths = []
+        for m in re.finditer(r'\{([^}]+)\}|(\S+)', raw):
+            paths.append(m.group(1) or m.group(2))
+        for p in paths:
+            if Path(p).suffix.lower() in ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'):
+                try:
+                    from ui.image_handler import load_image_from_file
+                    img = load_image_from_file(p)
+                    if img:
+                        self._set_image_attachment(img)
+                except Exception:
+                    pass
+                break
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)  # 이미지 미리보기
+        self.grid_rowconfigure(2, weight=0)  # 입력 컨테이너
 
         # ─ 채팅창 ─
         self.chat_box = ctk.CTkTextbox(
             self, state="disabled", wrap="word", font=("Malgun Gothic", 14)
         )
-        self.chat_box.grid(row=0, column=0, columnspan=4,
-                           padx=16, pady=(16, 4), sticky="nsew")
+        self.chat_box.grid(row=0, column=0, padx=16, pady=(16, 4), sticky="nsew")
 
         # ─ E: 이미지 미리보기 프레임 (기본 숨김) ─
         self.image_preview_frame = ctk.CTkFrame(self, height=56, fg_color="gray20")
-        self.image_preview_frame.grid(row=1, column=0, columnspan=4,
-                                      padx=16, pady=(0, 4), sticky="ew")
+        self.image_preview_frame.grid(row=1, column=0, padx=16, pady=(0, 4), sticky="ew")
         self.image_preview_frame.grid_columnconfigure(1, weight=1)
-        self.image_preview_frame.grid_remove()  # 초기 숨김
+        self.image_preview_frame.grid_remove()
 
         self.image_thumb_label = ctk.CTkLabel(
             self.image_preview_frame, text="", width=80
@@ -317,48 +378,76 @@ class DevSetupApp(ctk.CTk):
         )
         self.image_clear_button.grid(row=0, column=2, padx=(4, 8), pady=4)
 
-        # ─ 입력 영역 ─
-        self.input_field = ctk.CTkEntry(
-            self, placeholder_text="메시지를 입력하거나 스크린샷을 Ctrl+V로 붙여넣으세요...",
-            font=("Malgun Gothic", 14),
+        # ─ 입력 컨테이너 (입력창 + 버튼을 하나의 UI 블록으로 묶음) ─
+        self.input_container = ctk.CTkFrame(
+            self, fg_color="gray17", corner_radius=12
         )
-        self.input_field.grid(row=2, column=0, padx=(16, 4),
-                              pady=(0, 16), sticky="ew")
-        self.input_field.bind("<Return>", lambda e: self._on_send())
-        self.input_field.bind("<Control-v>", self._on_paste_event)
+        self.input_container.grid(row=2, column=0, padx=16, pady=(4, 16), sticky="ew")
+        self.input_container.grid_columnconfigure(0, weight=1)
 
-        # ─ E: 이미지 첨부 버튼 ─
+        # ─ 입력 영역 (멀티라인, 자동 높이 조절) ─
+        self.input_field = ctk.CTkTextbox(
+            self.input_container,
+            font=("Malgun Gothic", 14),
+            height=36,
+            wrap="word",
+            activate_scrollbars=True,
+            fg_color="transparent",
+            border_width=0,
+        )
+        self.input_field.grid(row=0, column=0, padx=(10, 10), pady=(8, 2), sticky="ew")
+        self.input_field.bind("<Return>",       self._on_input_return)
+        self.input_field.bind("<Shift-Return>", self._on_input_shift_return)
+        self.input_field.bind("<KeyRelease>",   self._on_input_resize)
+        self.input_field.bind("<Control-v>",    self._on_paste_event)
+
+        # ─ 구분선 (input_container 내부, 입력창과 버튼 사이) ─
+        tk.Frame(self.input_container, height=1, bg="#3d3d3d").grid(
+            row=1, column=0, padx=10, pady=(2, 4), sticky="ew"
+        )
+
+        # ─ 버튼 행 ─
+        btn_row = ctk.CTkFrame(self.input_container, fg_color="transparent")
+        btn_row.grid(row=2, column=0, padx=8, pady=(0, 8), sticky="ew")
+        btn_row.grid_columnconfigure(2, weight=1)  # 가운데 spacer
+
+        # E: 이미지 첨부 버튼
         self.attach_button = ctk.CTkButton(
-            self, text="📎", width=44,
+            btn_row, text="📎", width=36, height=30,
             font=("Malgun Gothic", 15), command=self._on_attach_image,
             fg_color="gray30", hover_color="gray20",
         )
-        self.attach_button.grid(row=2, column=1, padx=(0, 4), pady=(0, 16))
+        self.attach_button.grid(row=0, column=0, padx=(0, 4))
 
-        # ─ 전송 버튼 ─
-        self.send_button = ctk.CTkButton(
-            self, text="전송", width=80,
-            font=("Malgun Gothic", 14), command=self._on_send,
-        )
-        self.send_button.grid(row=2, column=2, padx=(0, 4), pady=(0, 16))
-
-        # ─ C: 설정 버튼 ─
+        # C: 설정 버튼
         self.settings_button = ctk.CTkButton(
-            self, text="⚙", width=44,
+            btn_row, text="⚙", width=36, height=30,
             font=("Malgun Gothic", 15), command=self._open_settings,
             fg_color="gray30", hover_color="gray20",
         )
-        self.settings_button.grid(row=2, column=3, padx=(0, 16), pady=(0, 16))
+        self.settings_button.grid(row=0, column=1, padx=(0, 4))
 
-        self.grid_rowconfigure(2, minsize=50)
+        # 전송 버튼
+        self.send_button = ctk.CTkButton(
+            btn_row, text="전송", width=80, height=30,
+            font=("Malgun Gothic", 14), command=self._on_send,
+        )
+        self.send_button.grid(row=0, column=3)
+
+        # 취소 버튼 (설치 중에만 표시)
+        self.cancel_button = ctk.CTkButton(
+            btn_row, text="취소", width=80, height=30,
+            font=("Malgun Gothic", 14), command=self._on_cancel_install,
+            fg_color="#8B1A1A", hover_color="#6B1212",
+        )
+        self.cancel_button.grid(row=0, column=3)
+        self.cancel_button.grid_remove()
 
     # ── LLM 초기화 ───────────────────────────────────────────────────────────
 
     def _init_llm(self):
-        print(f"[DEBUG] _init_llm 시작. LLM_PROVIDER={__import__('os').getenv('LLM_PROVIDER')}")
         try:
             self.llm = LLMClient()
-            print(f"[DEBUG] LLM 초기화 성공: {self.llm.provider_label}")
             self._append_message(
                 "시스템",
                 f"LLM 연결됨: {self.llm.provider_label}\n"
@@ -422,18 +511,35 @@ class DevSetupApp(ctk.CTk):
     # ── E. 이미지 첨부 ────────────────────────────────────────────────────────
 
     def _on_paste_event(self, event):
-        """Ctrl+V — 클립보드에 이미지가 있으면 첨부하고 텍스트 붙여넣기를 차단합니다."""
+        """Ctrl+V — 클립보드에 이미지/이미지 파일이 있으면 첨부하고 텍스트 붙여넣기를 차단합니다."""
         try:
-            from ui.image_handler import grab_clipboard_image, is_available
-            if not is_available():
-                return  # Pillow 없으면 기본 동작
+            from ui.image_handler import (
+                is_available, _clipboard_has_format, _CF_HDROP, _CF_DIB, _CF_DIBV5,
+            )
+            has_non_text = (
+                _clipboard_has_format(_CF_HDROP) or
+                _clipboard_has_format(_CF_DIB) or
+                _clipboard_has_format(_CF_DIBV5)
+            )
+            if has_non_text:
+                if is_available():
+                    # Tk가 <Control-v> 처리 중 클립보드를 점유하므로
+                    # 즉시 "break"로 차단 후 다음 틱에서 클립보드 접근
+                    self.after(10, self._load_clipboard_image)
+                return "break"
+        except Exception:
+            pass
+        self.after(10, self._on_input_resize)
+
+    def _load_clipboard_image(self):
+        """Ctrl+V 후 Tk의 클립보드 점유 해제를 기다렸다가 이미지를 로드합니다."""
+        try:
+            from ui.image_handler import grab_clipboard_image
             img = grab_clipboard_image()
             if img:
                 self._set_image_attachment(img)
-                return "break"   # 텍스트 붙여넣기 차단
         except Exception:
             pass
-        # 이미지 아닌 경우 기본 텍스트 붙여넣기 허용
 
     def _on_attach_image(self):
         """📎 버튼 — 파일 선택 다이얼로그로 이미지를 첨부합니다."""
@@ -459,7 +565,6 @@ class DevSetupApp(ctk.CTk):
         if not filepath:
             return
 
-        from ui.image_handler import load_image_from_file
         img = load_image_from_file(filepath)
         if img:
             self._set_image_attachment(img)
@@ -468,11 +573,19 @@ class DevSetupApp(ctk.CTk):
 
     def _set_image_attachment(self, img):
         """이미지를 현재 첨부물로 설정하고 미리보기를 표시합니다."""
+        # 이전 이미지 먼저 정리 (pyimage1 stale 참조 방지)
+        try:
+            self.image_thumb_label._label.configure(image="")
+        except Exception:
+            pass
         self._current_image = img
 
         # 썸네일 표시
         if img.thumbnail:
-            self.image_thumb_label.configure(image=img.thumbnail, text="")
+            try:
+                self.image_thumb_label.configure(image=img.thumbnail, text="")
+            except Exception:
+                self.image_thumb_label.configure(image=None, text="🖼")
         else:
             self.image_thumb_label.configure(image=None, text="🖼")
 
@@ -483,13 +596,30 @@ class DevSetupApp(ctk.CTk):
             name = "클립보드 이미지"
         self.image_name_label.configure(text=name)
 
-        # 미리보기 프레임 표시
+        # 미리보기 프레임 표시 후 DnD 등록 (프레임이 드롭 이벤트를 가로채지 않도록)
         self.image_preview_frame.grid()
+        if _DND_AVAILABLE:
+            for w in (self.image_preview_frame, self.image_thumb_label,
+                      self.image_name_label, self.image_clear_button):
+                try:
+                    w.drop_target_register(DND_FILES)
+                    w.dnd_bind("<<Drop>>", self._on_dnd_drop)
+                except Exception:
+                    pass
 
     def _clear_image_attachment(self):
         """첨부 이미지를 제거하고 미리보기를 숨깁니다."""
-        self._current_image = None
-        self.image_thumb_label.configure(image=None, text="")
+        # CTkLabel 내부 tk.Label에서 image를 먼저 직접 제거
+        # (CTkImage GC 후에도 tk.Label이 pyimage1을 참조하고 있어 TclError 발생)
+        try:
+            self.image_thumb_label._label.configure(image="")
+        except Exception:
+            pass
+        self._current_image = None   # CTkImage GC는 이 줄 이후에 발생
+        try:
+            self.image_thumb_label.configure(image=None, text="")
+        except Exception:
+            pass
         self.image_name_label.configure(text="")
         self.image_preview_frame.grid_remove()
 
@@ -497,15 +627,122 @@ class DevSetupApp(ctk.CTk):
 
     def _append_message(self, sender: str, message: str):
         self.chat_box.configure(state="normal")
-        self.chat_box.insert("end", f"[{sender}]\n{message}\n\n")
+        tb = self.chat_box._textbox
+        # 스피너가 활성화 중이면 스피너 줄 앞에 삽입
+        # Tk 텍스트 위젯은 끝에 암묵적 \n을 유지하므로:
+        #   end-1c = 암묵적 \n,  end-2c = 스피너 줄의 실제 마지막 \n
+        #   end-2c linestart = 스피너 줄의 첫 글자
+        pos = tb.index("end-2c linestart") if getattr(self, "_spinner_active", False) else "end"
+        tb.insert(pos, f"[{sender}]\n{message}\n\n")
         self.chat_box.see("end")
         self.chat_box.configure(state="disabled")
 
     def _append_text(self, text: str):
         """발신자 없이 텍스트만 추가 (스트리밍 청크 / 설치 로그)"""
         self.chat_box.configure(state="normal")
-        self.chat_box.insert("end", text)
+        tb = self.chat_box._textbox
+        spinner_on = getattr(self, "_spinner_active", False)
+        ins = tb.index("end-2c linestart") if spinner_on else "end"
+
+        if '\r' not in text:
+            tb.insert(ins, text)
+        else:
+            # \r 처리: winget 등 프로그레스바가 같은 줄을 덮어쓰는 경우
+            segments = text.split('\r')
+            tb.insert(ins, segments[0])
+            for seg in segments[1:]:
+                if '\n' in seg:
+                    ins = tb.index("end-2c linestart") if spinner_on else "end"
+                    tb.insert(ins, seg)
+                else:
+                    if spinner_on:
+                        # 스피너 직전 줄을 덮어쓴다
+                        spinner_line = tb.index("end-2c linestart")
+                        prev_end     = tb.index(f"{spinner_line} -1c")
+                        prev_start   = tb.index(f"{prev_end} linestart")
+                        if prev_start != prev_end:
+                            tb.delete(prev_start, prev_end)
+                        if seg:
+                            tb.insert(prev_start, seg)
+                    else:
+                        end_idx    = tb.index("end-1c")
+                        line_start = tb.index(f"{end_idx} linestart")
+                        if line_start != end_idx:
+                            tb.delete(line_start, "end-1c")
+                        if seg:
+                            tb.insert("end", seg)
+
         self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+
+    def _is_at_bottom(self) -> bool:
+        """스크롤이 맨 아래에 있는지 확인합니다."""
+        try:
+            _, bottom = self.chat_box._textbox.yview()
+            return bottom >= 0.99
+        except Exception:
+            return True
+
+    def _get_operation_label(self, actions) -> str:
+        """액션 목록을 보고 적절한 진행 레이블을 반환합니다."""
+        _REMOVE_KEYWORDS = {"uninstall", "remove", "제거", "삭제", "delete"}
+        for action in actions:
+            if isinstance(action, RunAction):
+                tokens = {t.lower() for t in action.command}
+                name   = action.display_name.lower()
+                if tokens & _REMOVE_KEYWORDS or any(k in name for k in _REMOVE_KEYWORDS):
+                    return "제거 진행 중"
+        return "설치 진행 중"
+
+    # ── 스피너 애니메이션 ────────────────────────────────────────────────────
+
+    def _start_spinner(self, label: str = "처리 중"):
+        """채팅창 맨 아래에 애니메이션 스피너 줄을 삽입합니다."""
+        self._spinner_active = True
+        self._spinner_frame_idx = 0
+        self._spinner_label = label
+        self.chat_box.configure(state="normal")
+        self.chat_box._textbox.insert("end", f"{_SPINNER_FRAMES[0]} {label}...\n")
+        self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+        self._spinner_after_id = self.after(_SPINNER_INTERVAL_MS, self._tick_spinner)
+
+    def _tick_spinner(self):
+        if not getattr(self, "_spinner_active", False):
+            return
+        self._spinner_frame_idx = (self._spinner_frame_idx + 1) % len(_SPINNER_FRAMES)
+        frame = _SPINNER_FRAMES[self._spinner_frame_idx]
+        self.chat_box.configure(state="normal")
+        tb = self.chat_box._textbox
+        try:
+            # end-2c = 스피너 줄 마지막 \n (암묵적 trailing \n 제외)
+            # end-2c linestart = 스피너 줄 첫 글자
+            start = tb.index("end-2c linestart")
+            end   = tb.index("end-2c")
+            tb.delete(start, end)
+            tb.insert(start, f"{frame} {self._spinner_label}...")
+        except Exception:
+            pass
+        # 사용자가 스크롤 중일 때는 강제로 아래로 이동하지 않음
+        if self._is_at_bottom():
+            self.chat_box.see("end")
+        self.chat_box.configure(state="disabled")
+        self._spinner_after_id = self.after(_SPINNER_INTERVAL_MS, self._tick_spinner)
+
+    def _stop_spinner(self):
+        """스피너를 멈추고 해당 줄을 채팅창에서 제거합니다."""
+        self._spinner_active = False
+        after_id = getattr(self, "_spinner_after_id", None)
+        if after_id:
+            self.after_cancel(after_id)
+            self._spinner_after_id = None
+        self.chat_box.configure(state="normal")
+        tb = self.chat_box._textbox
+        try:
+            # 스피너 줄 + 앞 \n 삭제 → 빈 줄 없이 깔끔하게 제거
+            tb.delete("end-2c linestart -1c", "end-2c")
+        except Exception:
+            pass
         self.chat_box.configure(state="disabled")
 
     def _set_input_enabled(self, enabled: bool):
@@ -513,14 +750,109 @@ class DevSetupApp(ctk.CTk):
         self.input_field.configure(state=state)
         self.send_button.configure(state=state)
         self.attach_button.configure(state=state)
+        self.settings_button.configure(state=state)
 
-    # ── 입력 처리 ────────────────────────────────────────────────────────────
+    def _set_installing_mode(self, installing: bool):
+        """설치 중일 때 취소 버튼을 표시하고 전송 버튼을 숨깁니다."""
+        if installing:
+            self.send_button.grid_remove()
+            self.cancel_button.grid()
+        else:
+            self.cancel_button.grid_remove()
+            self.send_button.grid()
+
+    def _on_cancel_install(self):
+        """설치 취소 요청 — stop_event를 설정해 실행 중인 명령어를 종료합니다."""
+        if hasattr(self, "_install_stop_event"):
+            self._install_stop_event.set()
+        self._append_message("시스템", "⚠️  설치 취소 중...")
+
+    # ── 입력창 이벤트 ────────────────────────────────────────────────────────
+
+    def _on_input_return(self, event):
+        """Enter → 전송 (줄바꿈 삽입 차단)"""
+        self._on_send()
+        return "break"
+
+    def _on_input_shift_return(self, event):
+        """Shift+Enter → 줄바꿈 삽입 후 현재 줄 수 +1 (word-wrap 상태 보존)."""
+        self.input_field.insert("insert", "\n")
+        prev = getattr(self, "_input_lines", 1)
+        new_lines = min(5, prev + 1)
+        if new_lines != prev:
+            self._input_lines = new_lines
+            self.input_field.configure(height=6 + new_lines * 26)
+        return "break"
+
+    def _on_input_resize(self, event=None):
+        """디바운스: 한글 IME 연속 이벤트 방지 (40ms)."""
+        if hasattr(self, "_resize_job") and self._resize_job:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(40, self._do_input_resize)
+
+    def _do_input_resize(self, use_layout=True):
+        """입력창 높이를 조절합니다 (최대 5줄).
+
+        use_layout=False: \\n 카운트만 사용 (Shift+Enter 즉시 호출 시)
+        use_layout=True : update_idletasks + displaylines로 word-wrap도 감지
+        줄 수가 바뀔 때만 configure → IME 입력 중 불필요한 리드로우 방지.
+        """
+        self._resize_job = None
+        content = self.input_field.get("1.0", "end-1c")
+        explicit_lines = content.count("\n") + 1
+
+        if use_layout:
+            try:
+                tb = self.input_field._textbox
+                tb.update_idletasks()
+                info_end = tb.dlineinfo("end-1c")
+                line_h = info_end[3] if (info_end and info_end[3] > 0) else 19
+                widget_h = tb.winfo_height()
+                lines_visible = max(1, widget_h // line_h)
+                yview = tb.yview()
+                frac = yview[1] - yview[0]  # 픽셀 기반 비율
+
+                if frac >= 0.99:
+                    # 전체 내용이 뷰포트 안에 있음 → dlineinfo로 직접 계산
+                    info_1_0 = tb.dlineinfo("1.0")
+                    if info_1_0 and info_end:
+                        display_lines = (info_end[1] - info_1_0[1]) // line_h + 1
+                    else:
+                        display_lines = lines_visible
+                else:
+                    # 일부가 스크롤됨 → yview 비율로 전체 줄 수 추정
+                    # yview는 픽셀 기반 → display line 비율과 동일
+                    display_lines = max(lines_visible, round(lines_visible / frac))
+
+                display_lines = max(1, display_lines)
+            except Exception:
+                display_lines = explicit_lines
+        else:
+            display_lines = explicit_lines
+
+        lines = max(explicit_lines, display_lines)
+        lines = max(1, min(5, lines))
+        prev = getattr(self, "_input_lines", 0)
+        # 이전 줄 수와 동일하면 아무것도 하지 않음
+        if lines == prev:
+            return
+        self._input_lines = lines
+        new_h = 6 + lines * 26
+        self.input_field.configure(height=new_h)
+        # 5줄 도달 시 스크롤바 색으로 가시화 (지원 여부 불확실 → try/except)
+        at_max = lines >= 5
+        try:
+            self.input_field.configure(
+                scrollbar_button_color="gray40" if at_max else "gray17",
+                scrollbar_button_hover_color="gray50" if at_max else "gray17",
+            )
+        except Exception:
+            pass
 
     def _on_send(self):
-        print(f"[DEBUG] _on_send 호출됨. llm={self.llm}, app_state={self.app_state}")
         if not self.llm:
             return
-        text = self.input_field.get().strip()
+        text = self.input_field.get("1.0", "end-1c").strip()
         image = self._current_image
 
         # 이미지만 있고 텍스트가 없으면 기본 프롬프트 사용
@@ -539,12 +871,12 @@ class DevSetupApp(ctk.CTk):
         else:
             self._append_message("나", text)
 
-        self.input_field.delete(0, "end")
+        self.input_field.delete("1.0", "end")
+        self.after(0, self._do_input_resize)   # 전송 후 높이 1줄로 복귀
         self._clear_image_attachment()
         self._handle_state(text, image)
 
     def _handle_state(self, text: str, image=None):
-        print(f"[DEBUG] _handle_state: app_state={self.app_state}")
         if self.app_state == STATE_INSTALLING:
             return
 
@@ -564,7 +896,6 @@ class DevSetupApp(ctk.CTk):
 
     def _send_to_llm_async(self, user_message: str, image=None):
         """B: 스트리밍으로 LLM을 호출합니다. image가 있으면 비전 모드로 호출합니다."""
-        print(f"[DEBUG] _send_to_llm_async: '{user_message[:40]}'")
         self._set_input_enabled(False)
         self._stream_chars_emitted = 0
 
@@ -572,26 +903,29 @@ class DevSetupApp(ctk.CTk):
         # topic_valid=False로 판명되면 이 위치 이후를 전부 삭제하고 고정 메시지로 교체한다.
         self._append_text("[AI]\n")
         self._ai_stream_start = self.chat_box._textbox.index("end-1c")
+        self._start_spinner("AI 응답 생성 중")
 
         def _on_chunk(chunk: str):
+            # 첫 청크 도착 시 스피너 제거
+            if getattr(self, "_spinner_active", False):
+                self._spinner_active = False          # 재진입 방지
+                self.after(0, self._stop_spinner)
             self._stream_chars_emitted += len(chunk)
             self.after(0, self._append_text, chunk)
 
         def _worker():
             try:
-                print("[DEBUG] LLM 스트리밍 시작")
                 response = self.llm.send_stream(
                     user_message, on_chunk=_on_chunk, image=image
                 )
-                print(f"[DEBUG] 스트리밍 완료. ready_to_install={response.ready_to_install}")
                 self.after(0, self._on_stream_done, response)
             except Exception as e:
-                print(f"[DEBUG] LLM 오류: {e}")
                 self.after(0, self._on_llm_error, str(e))
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_stream_done(self, response: LLMResponse):
+        self._stop_spinner()   # 청크가 하나도 없었던 경우를 대비한 정리
         # ── 주제 가드 (방법 1+4) ────────────────────────────────────────────
         # LLM이 topic_valid=false를 반환하면, 이미 스트리밍된 내용을 삭제하고
         # 고정 메시지로 교체한다. LLM 응답 내용은 사용자에게 노출되지 않는다.
@@ -616,6 +950,7 @@ class DevSetupApp(ctk.CTk):
             self._propose_actions(response.actions)
 
     def _on_llm_error(self, error_msg: str):
+        self._stop_spinner()
         self._append_text(f"⚠️  오류: {error_msg}\n다시 시도해주세요.\n\n")
         self._set_input_enabled(True)
 
@@ -789,12 +1124,17 @@ class DevSetupApp(ctk.CTk):
             return
 
         self.app_state = STATE_INSTALLING
+        self._install_stop_event = threading.Event()
         self._set_input_enabled(False)
-        self._append_message("AI", "설치를 시작합니다. 잠시 기다려주세요...\n")
+        self._set_installing_mode(True)
+        spinner_label = self._get_operation_label(self.pending_actions)
+        self._append_message("AI", f"{spinner_label.replace(' 진행 중', '')}을 시작합니다. 잠시 기다려주세요...\n")
+        self._start_spinner(spinner_label)
         threading.Thread(target=self._run_installation, daemon=True).start()
 
     def _run_installation(self):
         """백그라운드에서 액션들을 순서대로 실행합니다."""
+        stop = self._install_stop_event
         install_actions   = [a for a in self.pending_actions if isinstance(a, InstallAction)]
         run_actions       = [a for a in self.pending_actions if isinstance(a, RunAction)]
         set_env_actions   = [a for a in self.pending_actions if isinstance(a, SetEnvAction)]
@@ -806,6 +1146,8 @@ class DevSetupApp(ctk.CTk):
 
         # 1) 패키지 설치 (winget)
         for action in install_actions:
+            if stop.is_set():
+                break
             self.after(0, self._append_text, f"━━━ {action.display_name} ━━━\n")
 
             if action.check_command and shutil.which(action.check_command):
@@ -817,6 +1159,7 @@ class DevSetupApp(ctk.CTk):
                 cmd,
                 on_output=lambda line: self.after(0, self._append_text, line),
                 on_error=lambda msg: self.after(0, self._append_text, f"[오류] {msg}"),
+                stop_event=stop,
             )
             self.after(0, self._append_text, "\n")
             recorded_packages.append(action.display_name)
@@ -825,11 +1168,14 @@ class DevSetupApp(ctk.CTk):
 
         # 2) 추가 명령어 실행 (npm install 등)
         for action in run_actions:
+            if stop.is_set():
+                break
             self.after(0, self._append_text, f"━━━ {action.display_name} ━━━\n")
             ok = run_command(
                 action.command,
                 on_output=lambda line: self.after(0, self._append_text, line),
                 on_error=lambda msg: self.after(0, self._append_text, f"[오류] {msg}"),
+                stop_event=stop,
             )
             self.after(0, self._append_text, "\n")
             if not ok:
@@ -837,17 +1183,23 @@ class DevSetupApp(ctk.CTk):
 
         # 3) API 키 등 환경변수 설정 (사용자 입력 필요 → 메인 스레드 다이얼로그)
         for action in set_env_actions:
+            if stop.is_set():
+                break
             done = threading.Event()
             self.after(0, self._prompt_env_key, action, done)
             done.wait(timeout=300)  # 최대 5분 대기
 
         # 4) D: 컨테이너 세팅
         for action in container_actions:
+            if stop.is_set():
+                break
             self._run_container_setup(action)
             recorded_packages.append(action.display_name)
 
+        cancelled = stop.is_set()
         self.after(
-            0, self._on_installation_done, success, launch_actions, recorded_packages
+            0, self._on_installation_done, success, launch_actions, recorded_packages,
+            cancelled
         )
 
     def _prompt_env_key(self, action: SetEnvAction, done: threading.Event):
@@ -974,11 +1326,18 @@ class DevSetupApp(ctk.CTk):
 
     def _on_installation_done(
         self, success: bool, launch_actions: List[LaunchAction],
-        recorded_packages: List[str]
+        recorded_packages: List[str], cancelled: bool = False
     ):
         self.pending_actions.clear()
+        self._stop_spinner()
+        self._set_installing_mode(False)
         self._set_input_enabled(True)
         self.app_state = STATE_CHATTING
+
+        if cancelled:
+            self._append_message("시스템", "설치가 취소됐습니다.")
+            self._send_to_llm_async("사용자가 설치를 취소했습니다. 다시 도와주세요.")
+            return
 
         # F: 이력 기록 및 LLM 컨텍스트 갱신
         if recorded_packages:

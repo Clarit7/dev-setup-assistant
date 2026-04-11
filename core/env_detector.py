@@ -19,14 +19,15 @@ class DetectedTool:
     installed: bool
 
 
-# (이름, which 명령어, 버전 확인 명령어)
+# (이름, which 명령어, 버전 확인 명령어 or None)
+# None: GUI 앱이라 실행하면 창이 열릴 수 있으므로 which 확인만 함
 _TOOLS = [
     ("Node.js",    "node",    ["node",   "--version"]),
     ("npm",        "npm",     ["npm",    "--version"]),
     ("Python",     "python",  ["python", "--version"]),
     ("Git",        "git",     ["git",    "--version"]),
-    ("VS Code",    "code",    ["code",   "--version"]),
-    ("Cursor",     "cursor",  ["cursor", "--version"]),
+    ("VS Code",    "code",    None),   # code --version 이 VS Code 창을 열 수 있음
+    ("Cursor",     "cursor",  None),   # 동일
     ("Yarn",       "yarn",    ["yarn",   "--version"]),
     ("pnpm",       "pnpm",    ["pnpm",   "--version"]),
     ("Cargo/Rust", "cargo",   ["cargo",  "--version"]),
@@ -59,7 +60,12 @@ def detect_environment() -> List[DetectedTool]:
     results = []
     for name, cmd, version_cmd in _TOOLS:
         installed = shutil.which(cmd) is not None
-        version = _get_version(version_cmd) if installed else None
+        if not installed:
+            version = None
+        elif version_cmd is None:
+            version = "설치됨"   # GUI 앱 — 실행 없이 존재만 확인
+        else:
+            version = _get_version(version_cmd)
         results.append(DetectedTool(name=name, command=cmd, version=version, installed=installed))
     return results
 

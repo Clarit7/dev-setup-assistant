@@ -11,7 +11,7 @@ import base64
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 
 @dataclass
@@ -35,12 +35,23 @@ def _pil_to_base64(img, fmt: str = "PNG"):
 
 
 def _make_thumbnail(img, size=(80, 60)):
-    """PIL Image → CTkImage 썸네일. 실패 시 None 반환."""
+    """PIL Image → CTkImage 썸네일 (letterbox로 원본 비율 유지). 실패 시 None 반환."""
     try:
+        from PIL import Image as PILImage
         import customtkinter as ctk
+
         thumb = img.copy()
-        thumb.thumbnail(size)
-        return ctk.CTkImage(light_image=thumb, dark_image=thumb, size=size)
+        thumb.thumbnail(size, PILImage.LANCZOS)  # 비율 유지 축소
+
+        # size 박스에 검정 배경 letterbox 합성
+        canvas = PILImage.new("RGBA", size, (0, 0, 0, 0))
+        x = (size[0] - thumb.width)  // 2
+        y = (size[1] - thumb.height) // 2
+        if thumb.mode != "RGBA":
+            thumb = thumb.convert("RGBA")
+        canvas.paste(thumb, (x, y))
+
+        return ctk.CTkImage(light_image=canvas, dark_image=canvas, size=size)
     except Exception:
         return None
 
@@ -54,27 +65,100 @@ def is_available() -> bool:
         return False
 
 
+_IMAGE_EXTS = frozenset((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"))
+
+# Windows 클립보드 형식 ID
+_CF_HDROP = 15   # 파일 드롭 (탐색기 Ctrl+C)
+_CF_DIB   = 8    # DIB 비트맵 (스크린샷)
+_CF_DIBV5 = 17   # DIB v5 비트맵
+
+
+def _clipboard_has_format(fmt_id: int) -> bool:
+    """클립보드를 열지 않고 특정 형식의 존재 여부를 확인합니다."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.IsClipboardFormatAvailable(fmt_id))
+    except Exception:
+        return False
+
+
+def _get_clipboard_files_win32() -> Optional[List[str]]:
+    """Windows 클립보드에서 CF_HDROP 파일 경로 목록을 ctypes로 직접 가져옵니다."""
+    try:
+        import ctypes
+        import ctypes.wintypes
+        user32  = ctypes.windll.user32
+        shell32 = ctypes.windll.shell32
+        kernel32 = ctypes.windll.kernel32
+
+        # 64비트 Windows에서 HANDLE은 64비트 — 기본 c_int로는 잘림
+        user32.GetClipboardData.restype = ctypes.c_void_p
+        user32.GetClipboardData.argtypes = [ctypes.c_uint]
+        shell32.DragQueryFileW.restype  = ctypes.c_uint
+        shell32.DragQueryFileW.argtypes = [
+            ctypes.c_void_p,  # hDrop
+            ctypes.c_uint,    # iFile
+            ctypes.c_wchar_p, # lpszFile
+            ctypes.c_uint,    # cch
+        ]
+
+        if not user32.OpenClipboard(None):
+            return None
+        try:
+            h_drop = user32.GetClipboardData(_CF_HDROP)
+            if not h_drop:
+                return None
+            count = shell32.DragQueryFileW(h_drop, 0xFFFFFFFF, None, 0)
+            files = []
+            for i in range(count):
+                buf = ctypes.create_unicode_buffer(260)
+                shell32.DragQueryFileW(h_drop, i, buf, 260)
+                files.append(buf.value)
+            return files if files else None
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return None
+
+
 def grab_clipboard_image() -> Optional[ImageAttachment]:
     """
     클립보드에서 이미지를 가져옵니다 (Windows/macOS).
     이미지가 없으면 None을 반환합니다.
     """
     try:
+        # ── Windows 파일 복사(CF_HDROP) 감지 ──────────────────────────────────
+        # IsClipboardFormatAvailable은 클립보드를 열지 않아도 호출 가능.
+        # CF_HDROP가 있으면 PIL을 절대 호출하지 않음 — PIL은 Windows에서
+        # 클립보드 DIB(파일 미리보기 포함)를 tkinter PhotoImage로 변환하려
+        # 시도하므로 "pyimage1 doesn't exist" TclError가 발생할 수 있음.
+        if _clipboard_has_format(_CF_HDROP):
+            files = _get_clipboard_files_win32()
+            if files:
+                for path in files:
+                    if Path(path).suffix.lower() in _IMAGE_EXTS:
+                        return load_image_from_file(path)
+            # CF_HDROP 있으면 PIL 폴백 없이 바로 None 반환
+            return None
+
+        # ── 실제 이미지 데이터(스크린샷 등) — PIL로 처리 ─────────────────────
+        # CF_DIB/CF_DIBV5 도 없으면 굳이 PIL을 호출할 필요 없음
+        if not (_clipboard_has_format(_CF_DIB) or _clipboard_has_format(_CF_DIBV5)):
+            return None
+
         from PIL import ImageGrab
         data = ImageGrab.grabclipboard()
         if data is None:
             return None
 
-        # 파일 경로 리스트인 경우 (파일을 복사했을 때)
+        # PIL이 혹시 리스트를 반환하는 경우 (폴백)
         if isinstance(data, list):
             for path in data:
-                if Path(path).suffix.lower() in (
-                    ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"
-                ):
+                if Path(path).suffix.lower() in _IMAGE_EXTS:
                     return load_image_from_file(path)
             return None
 
-        # PIL Image 객체인 경우 (스크린샷 캡처 후 붙여넣기)
+        # PIL Image 객체 (스크린샷)
         b64, media_type = _pil_to_base64(data)
         thumbnail = _make_thumbnail(data)
         return ImageAttachment(

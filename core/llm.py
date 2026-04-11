@@ -56,19 +56,30 @@ Set ready_to_install to true ONLY when you have a complete plan and want
 to propose it to the user. Keep it false while gathering information.
 
 ## TOPIC GUARD
-This assistant answers ONLY questions related to:
+This assistant answers questions related to:
 - Installing or configuring development tools (Node.js, Python, Git, Docker, etc.)
 - Setting up programming/dev environments on any OS
 - Container/Docker-based dev environments
 - IDE configuration and extensions
 - Package managers and build tools
 - Troubleshooting dev environment issues (including screenshot analysis)
+- Wanting to develop / build any kind of software project (web, mobile, game, CLI, AI, etc.)
+- Choosing a tech stack, language, or framework for a project
+- Any developer question that can naturally lead to environment setup suggestions
 
-If the user asks about ANYTHING else (writing, translation, general knowledge,
-math, entertainment, personal advice, etc.), you MUST:
+When the user expresses interest in developing something (e.g. "I want to build a game",
+"I'm thinking of starting a React project", "which language should I use for X"),
+treat it as ON-TOPIC and proactively suggest the relevant environment setup.
+
+If the user asks about ANYTHING clearly unrelated to software development or tech
+(writing essays, translation, general knowledge, math homework, entertainment,
+personal advice, cooking, etc.), you MUST:
 1. Set topic_valid=false
 2. Write a single polite refusal sentence in message — do NOT answer the question
 3. Keep ready_to_install=false and actions=[]
+
+When in doubt, lean toward topic_valid=true and steer the conversation toward
+what dev environment the user might need.
 
 When topic_valid=true (normal case), omit it or set it to true.
 
@@ -370,11 +381,15 @@ class LLMClient:
             i = emitted
             while i < len(accumulated):
                 c = accumulated[i]
-                if c == "\\" and i + 1 < len(accumulated):
-                    nxt = accumulated[i + 1]
-                    escape_map = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "r": "\r"}
-                    buf.append(escape_map.get(nxt, nxt))
-                    i += 2
+                if c == "\\":
+                    if i + 1 < len(accumulated):
+                        nxt = accumulated[i + 1]
+                        escape_map = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "r": "\r"}
+                        buf.append(escape_map.get(nxt, nxt))
+                        i += 2
+                    else:
+                        # 청크 경계에서 \가 끊긴 경우 — 다음 청크를 기다림
+                        break
                 elif c == '"':
                     msg_done = True
                     i += 1
