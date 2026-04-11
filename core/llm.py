@@ -274,10 +274,6 @@ class LLMClient:
         )
 
     def _init_groq(self):
-        try:
-            import openai  # noqa: F401
-        except ImportError:
-            raise ImportError("pip install openai  을 실행하세요.")
         api_key = os.getenv("GROQ_API_KEY", "")
         if not api_key:
             raise ValueError(
@@ -285,11 +281,22 @@ class LLMClient:
                 ".env 파일에 GROQ_API_KEY=gsk_... 를 추가하세요.\n"
                 "API 키 발급: https://console.groq.com/keys"
             )
-        import openai as _oai
-        self._client = _oai.OpenAI(
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
+        # groq 패키지 우선, 없으면 openai SDK + Groq base_url로 폴백
+        try:
+            import groq as _groq
+            self._client = _groq.Groq(api_key=api_key)
+        except ImportError:
+            try:
+                import openai as _oai
+                self._client = _oai.OpenAI(
+                    api_key=api_key,
+                    base_url="https://api.groq.com/openai/v1",
+                )
+            except ImportError:
+                raise ImportError(
+                    "pip install groq  을 실행하세요.\n"
+                    "(또는 pip install openai 으로도 동작합니다)"
+                )
         self.model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
     def _init_ollama(self):

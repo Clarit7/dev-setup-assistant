@@ -4,10 +4,10 @@ Pillow>=10.0.0             # 이미지 첨부/붙여넣기 기능 (스크린샷 
 
 # LLM 프로바이더 (사용할 것만 설치하면 됩니다)
 anthropic>=0.34.0          # Anthropic Claude (추천)
-openai>=1.40.0             # OpenAI GPT, Groq (openai SDK 재사용)
+openai>=1.40.0             # OpenAI GPT
+groq>=0.11.0               # Groq (llama-3.3-70b-versatile 등, 무료 티어)
 google-generativeai>=0.8.0 # Google Gemini (무료 티어)
 requests>=2.31.0           # Ollama (로컬) 지원
-# Groq: 별도 패키지 불필요 — openai SDK로 동작 (GROQ_API_KEY만 설정)
 
 # .env 파일 자동 로드
 python-dotenv>=1.0.0
