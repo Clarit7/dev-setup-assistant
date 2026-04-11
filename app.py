@@ -344,18 +344,30 @@ class DevSetupApp(_AppBase):
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=0)  # 이미지 미리보기
-        self.grid_rowconfigure(2, weight=0)  # 입력 컨테이너
+
+        # ─ 탭 뷰 ─
+        self.tab_view = ctk.CTkTabview(self)
+        self.tab_view.grid(row=0, column=0, padx=16, pady=16, sticky="nsew")
+        for tab_name in ("채팅", "컨테이너", "Git 설정", "WSL"):
+            self.tab_view.add(tab_name)
+        self.tab_view.set("채팅")
+
+        # ─ 채팅 탭 ─
+        chat_tab = self.tab_view.tab("채팅")
+        chat_tab.grid_columnconfigure(0, weight=1)
+        chat_tab.grid_rowconfigure(0, weight=1)
+        chat_tab.grid_rowconfigure(1, weight=0)
+        chat_tab.grid_rowconfigure(2, weight=0)
 
         # ─ 채팅창 ─
         self.chat_box = ctk.CTkTextbox(
-            self, state="disabled", wrap="word", font=("Malgun Gothic", 14)
+            chat_tab, state="disabled", wrap="word", font=("Malgun Gothic", 14)
         )
-        self.chat_box.grid(row=0, column=0, padx=16, pady=(16, 4), sticky="nsew")
+        self.chat_box.grid(row=0, column=0, padx=0, pady=(0, 4), sticky="nsew")
 
         # ─ E: 이미지 미리보기 프레임 (기본 숨김) ─
-        self.image_preview_frame = ctk.CTkFrame(self, height=56, fg_color="gray20")
-        self.image_preview_frame.grid(row=1, column=0, padx=16, pady=(0, 4), sticky="ew")
+        self.image_preview_frame = ctk.CTkFrame(chat_tab, height=56, fg_color="gray20")
+        self.image_preview_frame.grid(row=1, column=0, padx=0, pady=(0, 4), sticky="ew")
         self.image_preview_frame.grid_columnconfigure(1, weight=1)
         self.image_preview_frame.grid_remove()
 
@@ -380,9 +392,9 @@ class DevSetupApp(_AppBase):
 
         # ─ 입력 컨테이너 (입력창 + 버튼을 하나의 UI 블록으로 묶음) ─
         self.input_container = ctk.CTkFrame(
-            self, fg_color="gray17", corner_radius=12
+            chat_tab, fg_color="gray17", corner_radius=12
         )
-        self.input_container.grid(row=2, column=0, padx=16, pady=(4, 16), sticky="ew")
+        self.input_container.grid(row=2, column=0, padx=0, pady=(4, 0), sticky="ew")
         self.input_container.grid_columnconfigure(0, weight=1)
 
         # ─ 입력 영역 (멀티라인, 자동 높이 조절) ─
@@ -442,6 +454,30 @@ class DevSetupApp(_AppBase):
         )
         self.cancel_button.grid(row=0, column=3)
         self.cancel_button.grid_remove()
+
+        # ─ 컨테이너 탭 ─
+        from ui.container_dashboard import ContainerDashboard
+        container_tab = self.tab_view.tab("컨테이너")
+        container_tab.grid_columnconfigure(0, weight=1)
+        container_tab.grid_rowconfigure(0, weight=1)
+        self.container_dashboard = ContainerDashboard(container_tab)
+        self.container_dashboard.grid(row=0, column=0, sticky="nsew")
+
+        # ─ Git 설정 탭 ─
+        from ui.git_tab import GitTab
+        git_tab = self.tab_view.tab("Git 설정")
+        git_tab.grid_columnconfigure(0, weight=1)
+        git_tab.grid_rowconfigure(0, weight=1)
+        self.git_tab_widget = GitTab(git_tab)
+        self.git_tab_widget.grid(row=0, column=0, sticky="nsew")
+
+        # ─ WSL 탭 ─
+        from ui.wsl_tab import WSLTab
+        wsl_tab = self.tab_view.tab("WSL")
+        wsl_tab.grid_columnconfigure(0, weight=1)
+        wsl_tab.grid_rowconfigure(0, weight=1)
+        self.wsl_tab_widget = WSLTab(wsl_tab)
+        self.wsl_tab_widget.grid(row=0, column=0, sticky="nsew")
 
     # ── LLM 초기화 ───────────────────────────────────────────────────────────
 

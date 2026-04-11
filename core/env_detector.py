@@ -36,6 +36,7 @@ _TOOLS = [
     ("Docker",     "docker",  ["docker", "--version"]),
     ("Deno",       "deno",    ["deno",   "--version"]),
     ("Bun",        "bun",     ["bun",    "--version"]),
+    ("WSL",        "wsl",     None),
 ]
 
 

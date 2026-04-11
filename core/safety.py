@@ -44,6 +44,8 @@ ALLOWED_EXECUTABLES = {
     "mongod", "mongosh", "mongo",                        # MongoDB
     "redis-cli", "redis-server",                         # Redis
     "sqlite3",                                           # SQLite
+    # SSH
+    "ssh", "ssh-keygen", "ssh-add", "ssh-copy-id",
 }
 
 # ── 위험한 인자 패턴 (허용된 실행 파일 내에서도 차단) ─────────────────────
