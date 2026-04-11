@@ -54,16 +54,22 @@ class GitTab(ctk.CTkScrollableFrame):
         self._pubkey_frame = ctk.CTkFrame(self, fg_color="gray20", corner_radius=6)
         self._pubkey_frame.grid(row=row, column=0, padx=16, pady=(0, 4), sticky="ew")
         self._pubkey_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            self._pubkey_frame,
+            text="공개키 (Public Key) — GitHub·GitLab에 등록하는 값으로, 공유해도 안전합니다.\n개인키(Private Key)는 표시되지 않습니다.",
+            font=("Malgun Gothic", 11), text_color="gray55",
+            justify="left",
+        ).grid(row=0, column=0, padx=8, pady=(8, 2), sticky="w")
         self._pubkey_box = ctk.CTkTextbox(
             self._pubkey_frame, height=60, state="disabled",
             font=("Consolas", 11), wrap="char",
         )
-        self._pubkey_box.grid(row=0, column=0, padx=8, pady=(8, 4), sticky="ew")
+        self._pubkey_box.grid(row=1, column=0, padx=8, pady=(0, 4), sticky="ew")
         ctk.CTkButton(
             self._pubkey_frame, text="📋 공개키 복사", height=28,
             font=("Malgun Gothic", 12),
             command=self._copy_pubkey,
-        ).grid(row=1, column=0, padx=8, pady=(0, 8), sticky="w")
+        ).grid(row=2, column=0, padx=8, pady=(0, 8), sticky="w")
         self._pubkey_frame.grid_remove()
         row += 1
 

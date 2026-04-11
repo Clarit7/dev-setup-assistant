@@ -392,9 +392,10 @@ class DevSetupApp(_AppBase):
 
         # ─ 입력 컨테이너 (입력창 + 버튼을 하나의 UI 블록으로 묶음) ─
         self.input_container = ctk.CTkFrame(
-            chat_tab, fg_color="gray17", corner_radius=12
+            chat_tab, fg_color="gray20", corner_radius=12,
+            border_width=1, border_color="gray30",
         )
-        self.input_container.grid(row=2, column=0, padx=0, pady=(4, 0), sticky="ew")
+        self.input_container.grid(row=2, column=0, padx=0, pady=(6, 0), sticky="ew")
         self.input_container.grid_columnconfigure(0, weight=1)
 
         # ─ 입력 영역 (멀티라인, 자동 높이 조절) ─
